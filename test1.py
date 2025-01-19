@@ -17,7 +17,10 @@ class Module:
         self.y = y
 
     def __str__(self):
-        return f"Module({self.name}, Pos=({self.x}, {self.y}), Size=({self.width}, {self.height}))"
+        formatted_net = "\n    ".join(self.net)
+        return (f"Module(Name={self.name}, Width={self.width:.2f}, Height={self.height:.2f}, "
+                f"Area={self.area:.2f}, Position=({self.x:.2f}, {self.y:.2f}), "
+                f"Type={self.type}, Net=\n    {formatted_net})")
 
 def parse_yal(file_path):
     modules = []
@@ -25,6 +28,8 @@ def parse_yal(file_path):
         lines = f.readlines()
 
     module_data = {}
+    in_network = False
+
     for line in lines:
         line = line.strip()
         if not line or line.startswith("/*") or line.startswith("*"):
@@ -44,14 +49,24 @@ def parse_yal(file_path):
             module_data['width'] = max(x_coords) - min(x_coords)
             module_data['height'] = max(y_coords) - min(y_coords)
             continue
+        if line.startswith("NETWORK"):
+            in_network = True
+            continue
+        if line.startswith("ENDNETWORK"):
+            in_network = False
+            continue
         if line.startswith("ENDMODULE"):
             modules.append(Module(
                 name=module_data['name'],
                 width=module_data['width'],
                 height=module_data['height'],
-                module_type=module_data['type']
+                module_type=module_data['type'],
+                net=module_data['net']
             ))
             module_data = {}
+            continue
+        if in_network:
+            module_data['net'].append(line.strip(';'))
             continue
 
     return modules
@@ -69,7 +84,6 @@ class Chip:
         self.root = None
 
     def build_b_tree(self):
-        """B*-Tree 생성 (왼쪽 자식 → 오른쪽, 오른쪽 자식 → 위로 배치)"""
         if not self.modules or not self.bound:
             return
         self.root = BTreeNode(self.modules[0])
@@ -96,28 +110,32 @@ class Chip:
 
         x, y = self.find_non_overlapping_position(node.module, x_offset, y_offset, placed_modules)
 
-        if x + node.module.width > self.bound.width or y + node.module.height > self.bound.height:
+        if x + node.module.width > self.bound.width:
+            x = 0
+            y_offset += max(m.height for m in placed_modules) if placed_modules else 0
+            x, y = self.find_non_overlapping_position(node.module, x, y_offset, placed_modules)
+
+        if y + node.module.height > self.bound.height:
             raise ValueError(f"Module {node.module.name} exceeds boundary constraints")
 
         node.module.set_position(x, y)
         placed_modules.append(node.module)
 
-        # 왼쪽 자식 → 오른쪽으로 배치
         if node.left:
             self.calculate_coordinates(node.left, x + node.module.width, y, placed_modules)
 
-        # 오른쪽 자식 → 위로 배치
         if node.right:
             self.calculate_coordinates(node.right, x, y + node.module.height, placed_modules)
 
     def find_non_overlapping_position(self, module, x_start, y_start, placed_modules):
-        """겹치지 않는 위치를 찾기"""
         x, y = x_start, y_start
         while True:
             overlap = False
             for placed in placed_modules:
-                if (x < placed.x + placed.width and x + module.width > placed.x and
-                        y < placed.y + placed.height and y + module.height > placed.y):
+                if (x < placed.x + placed.width and
+                    x + module.width > placed.x and
+                    y < placed.y + placed.height and
+                    y + module.height > placed.y):
                     overlap = True
                     x += placed.width
                     if x + module.width > self.bound.width:
@@ -128,11 +146,10 @@ class Chip:
                 return x, y
 
     def plot_b_tree(self):
-        """배치된 모듈 시각화"""
         fig, ax = plt.subplots(figsize=(12, 8))
         self._plot_node(self.root, ax)
 
-        bound_rect = plt.Rectangle((0, 0), self.bound.width, self.bound.height,
+        bound_rect = plt.Rectangle((0, 0), self.bound.width, self.bound.height, 
                                    edgecolor='red', facecolor='none', lw=2)
         ax.add_patch(bound_rect)
         ax.text(self.bound.width / 2, self.bound.height / 2, self.bound.name,
@@ -146,7 +163,6 @@ class Chip:
         plt.show()
 
     def _plot_node(self, node, ax):
-        """개별 노드 플로팅"""
         if node is None:
             return
         module = node.module
@@ -155,12 +171,11 @@ class Chip:
         ax.add_patch(rect)
         ax.text(module.x + module.width / 2, module.y + module.height / 2,
                 module.name, ha='center', va='center', fontsize=8)
-
         self._plot_node(node.left, ax)
         self._plot_node(node.right, ax)
 
     def plot_b_tree_structure(self):
-        """B*-Tree 구조 시각화"""
+        """B*-Tree 구조를 시각화"""
         if self.root is None:
             return
 
