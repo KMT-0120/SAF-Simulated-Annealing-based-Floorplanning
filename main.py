@@ -169,6 +169,15 @@ class Chip:
         fig2 = plt.figure(figsize=(12, 8))
         nx.draw(G, pos, with_labels=True, node_color="lightblue", edge_color="gray", node_size=2000, font_size=10)
         plt.title("B*-Tree Structure")
+def calculate_hpwl(modules):
+    min_x = min(m.x for m in modules)
+    max_x = max(m.x + m.width for m in modules)
+    min_y = min(m.y for m in modules)
+    max_y = max(m.y + m.height for m in modules)
+    return (max_x - min_x) + (max_y - min_y)
+
+def calculate_total_area(modules):
+    return sum(module.area for module in modules)
 
 def parse_yal(file_path):
     modules = []
@@ -220,7 +229,7 @@ def parse_yal(file_path):
     return modules
 
 # 실행
-yal_file = "./example/standardcell.yal"
+yal_file = "./example/ami33.yal"
 modules = parse_yal(yal_file)
 chip = Chip(modules)
 chip.build_b_tree()
@@ -228,3 +237,5 @@ chip.calculate_coordinates()
 chip.plot_b_tree()
 chip.plot_b_tree_structure()
 plt.show()
+print("총 면적:", calculate_total_area(chip.modules))
+print("HPWL:", calculate_hpwl(chip.modules))
