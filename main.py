@@ -177,7 +177,22 @@ def calculate_hpwl(modules):
     return (max_x - min_x) + (max_y - min_y)
 
 def calculate_total_area(modules):
-    return sum(module.area for module in modules)
+    if not modules:
+        return 0  # 모듈이 없을 경우 0 반환 등 예외 처리
+    
+    min_x = min(m.x for m in modules)
+    max_x = max(m.x + m.width for m in modules)
+    min_y = min(m.y for m in modules)
+    max_y = max(m.y + m.height for m in modules)
+    
+   # 배치된 모듈들을 감싸는 최소 bounding box의 너비와 높이
+    chip_width = max_x - min_x
+    chip_height = max_y - min_y
+
+    # bounding box의 전체 면적
+    total_area = chip_width * chip_height
+
+    return chip_width, chip_height, total_area
 
 def parse_yal(file_path):
     modules = []
@@ -237,5 +252,6 @@ chip.calculate_coordinates()
 chip.plot_b_tree()
 chip.plot_b_tree_structure()
 plt.show()
-print("총 면적:", calculate_total_area(chip.modules))
+chip_width, chip_height, total_area = calculate_total_area(chip.modules)
+print(f"칩의 전체 영역: 가로={chip_width}, 세로={chip_height}, 면적={total_area}")
 print("HPWL:", calculate_hpwl(chip.modules))
