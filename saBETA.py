@@ -209,8 +209,7 @@ class Chip:
             nd.module.order = None
         self.calculate_coordinates()
 
-        return (msg, op)  # ← 변경: (메시지, 어떤 Op인지) 반환
-
+        return (msg, op)
 
     def calculate_coordinates(self, node=None, x_offset=0, y_offset=0, placed_modules=None, order=1):
         """
@@ -226,11 +225,11 @@ class Chip:
         if node.parent is None:
             x, y = x_offset, y_offset
         else:
-            # 왼쪽 자식은 (부모.x + 부모.width, 부모.y)
+            # 왼쪽 자식 = (부모.x + 부모.width, 부모.y)
             if node == node.parent.left:
                 x = node.parent.module.x + node.parent.module.width
                 y = node.parent.module.y
-            else:  # 오른쪽 자식은 (부모.x, 부모.y + 부모.height)
+            else:  # 오른쪽 자식 = (부모.x, 부모.y + 부모.height)
                 x = node.parent.module.x
                 y = node.parent.module.y + node.parent.module.height
 
@@ -271,7 +270,7 @@ class Chip:
         return (x + module.width <= self.bound.width) and (y + module.height <= self.bound.height)
 
     # ─────────────────────────────────────────
-    # 실제 CHIP, B*-tree 시각화
+    # 시각화
     # ─────────────────────────────────────────
     def plot_b_tree(self):
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(24, 12))
@@ -328,7 +327,7 @@ class Chip:
         return x_pos
 
     # ─────────────────────────────────────────
-    # 무작위로 "modules"를 섞어 새로운 배치를 만들고 Cost 반환
+    # 무작위로 "modules"를 섞어서 새로운 배치를 만든 뒤 Cost 계산
     # ─────────────────────────────────────────
     def randomize_b_tree(self, w=0.5):
         random.shuffle(self.modules)
@@ -338,12 +337,14 @@ class Chip:
 
 
 # ─────────────────────────────────────────────────────────────
-# 2. Cost 계산 함수들
+# 2. Cost 계산 함수들 (간단 정규화)
 # ─────────────────────────────────────────────────────────────
 def calculate_hpwl(modules):
     """
     HPWL = (max_x - min_x) + (max_y - min_y)
     """
+    if not modules:
+        return 0
     min_x = min(m.x for m in modules)
     max_x = max(m.x + m.width for m in modules)
     min_y = min(m.y for m in modules)
@@ -354,6 +355,8 @@ def calculate_total_area(modules):
     """
     bounding box의 폭, 높이, 면적 반환
     """
+    if not modules:
+        return 0,0,0
     min_x = min(m.x for m in modules)
     max_x = max(m.x + m.width for m in modules)
     min_y = min(m.y for m in modules)
@@ -364,95 +367,121 @@ def calculate_total_area(modules):
 
 def calc_combined_cost(modules, w=0.5):
     """
-    모듈들의 bounding box 면적 + HPWL을 가중 합
-    cost = w * area + (1 - w) * HPWL
+    간단 정규화:
+      area_bb/base_scale + hpwl/hpwl_scale
     """
-    chip_width, chip_height, area = calculate_total_area(modules)
+    if not modules:
+        return 0.0
+
+    hpwl_scale = 10.0   # HPWL 정규화 상수
+    base_scale = 150.0  # area 정규화 상수
+
+    _, _, area_bb = calculate_total_area(modules)
     hpwl = calculate_hpwl(modules)
-    return w * area + (1 - w) * hpwl
+
+    area_norm = area_bb / base_scale
+    hpwl_norm = hpwl / hpwl_scale
+
+    return w * area_norm + (1 - w) * hpwl_norm
 
 
 # ─────────────────────────────────────────────────────────────
-# 3. FastSA 함수
+# 3. FastSA 함수 (수정된 \Delta_avg, \Delta_cost 정의 적용)
 # ─────────────────────────────────────────────────────────────
 def fast_sa(chip, max_iter=50, P=0.99, c=100, w=0.5, sample_moves=10):
     """
-    3단계 온도 스케줄의 FastSA.
-    - chip: 초기 Chip 객체
-    - max_iter: SA 반복 횟수
-    - P: 초기 열악한 해(나쁜 해) 수용 확률
-    - c: 2단계 상수 (100)
-    - w: cost 함수에서 area vs HPWL 비중
-    - sample_moves: 초기 평균 비용 변화량(\Delta_{AVG}) 측정에 쓰이는 무작위 연산 횟수
+    FastSA + 간단 정규화 cost
+      - \Delta_avg : 초기 온도 설정 시, sample_moves 번 랜덤 move에서
+                     오직 "uphill" (cost 증가)인 move만 평균낸 값
+      - \Delta_cost: 각 iteration 마다, 현 온도에서 여러 번(move) 시도해본
+                     cost 변화량(절댓값)들의 평균
     """
     import copy, math, random
 
-    # ───────── (1) 초기 평균 비용 변화량 \Delta_{AVG} 측정 ─────────
+    # (1) 초기 온도 설정을 위한 \Delta_avg 측정
     original_state = copy.deepcopy(chip)
     original_cost = calc_combined_cost(chip.modules, w)
 
-    cost_diffs = []
+    uphill_diffs = []
     for _ in range(sample_moves):
-        chip.apply_random_operation()  # 여기서도 (msg, op)를 반환하지만, 샘플링만 하므로 굳이 받지 않음
+        msg, op = chip.apply_random_operation()
         new_cost = calc_combined_cost(chip.modules, w)
-        cost_diffs.append(abs(new_cost - original_cost))
-        # 원상복구
+        delta_e = new_cost - original_cost
+        # 올라간(Uphill) move만 수집
+        if delta_e > 0:
+            uphill_diffs.append(delta_e)
+        # 롤백
         chip = copy.deepcopy(original_state)
 
-    if cost_diffs:
-        delta_avg = sum(cost_diffs) / len(cost_diffs)
+    # 올라간 move가 하나도 없으면 1.0 사용
+    if uphill_diffs:
+        delta_avg = sum(uphill_diffs) / len(uphill_diffs)
     else:
         delta_avg = 1.0
-
-    # 초기 온도 T1 = delta_avg / math.log(P)
     if delta_avg < 1e-12:
         delta_avg = 1.0
-    T1 = delta_avg / math.log(P)
 
-    # ───────── (2) 초기 cost, best cost 기록 ─────────
+    # 초기 온도 T1 = delta_avg / ln(P) * a (a는 보정계수)
+    T1_scale_factor = 0.3
+    T1 = abs(delta_avg / math.log(P)) * T1_scale_factor
+    print(f"Initial T1 = {T1:.3f}")
+
+    # (2) 초기 cost, best cost
     best_chip = copy.deepcopy(chip)
-    best_cost = calc_combined_cost(chip.modules, w)
-    current_cost = best_cost
+    best_cost = original_cost
+    current_cost = original_cost
 
-    # ───────── (3) SA 반복 ─────────
+    # (3) SA 반복
     for n in range(1, max_iter+1):
-        # 백업(롤백용)
+
+        # ── 이번 iteration에서의 \Delta_cost (평균 cost 변화량) 계산 ──
+        #    현재 상태에서 sample_moves번 move를 해보고 그 절댓값을 평균
+        state_copy = copy.deepcopy(chip)
+        cost_diffs_iter = []
+        for _ in range(sample_moves):
+            msg_tmp, op_tmp = chip.apply_random_operation()
+            tmp_cost = calc_combined_cost(chip.modules, w)
+            cost_diffs_iter.append(abs(tmp_cost - current_cost))
+            # 매번 롤백
+            chip = copy.deepcopy(state_copy)
+
+        if cost_diffs_iter:
+            delta_cost = max(sum(cost_diffs_iter) / len(cost_diffs_iter), 1e-6)
+        else:
+            delta_cost = 1e-6
+
+        # ── 실제로 1번 move를 진행해서 새로운 해 후보를 만든다 ──
         old_chip_state = copy.deepcopy(chip)
         old_cost = current_cost
 
-        # (a) 무작위 연산 적용 & 결과 받기
         msg, op = chip.apply_random_operation()
-
-        # (b) cost 계산
         new_cost = calc_combined_cost(chip.modules, w)
         delta_e = new_cost - old_cost
-        delta_cost = abs(delta_e)
 
-        # (c) 온도 T_n 계산
+        # 온도 T_n
         if n == 1:
             T = T1
         elif 2 <= n <= 7:
-            T = (T1 * delta_cost) / (n * c)
+            T = max((T1 * delta_cost) / (n * c), 1e-6)
         else:
-            T = (T1 * delta_cost) / n
+            T = max((T1 * delta_cost) / n, 1e-6)
 
-        # (d) SA 수용 여부 + 확률
-        accept_prob = 1.0  # 개선된 해면 굳이 확률 계산 안 해도 되지만, 여기선 기본값
+        # SA 수용 여부(메트로폴리스 기준)
         if delta_e < 0:
-            # 개선된 해 → 무조건 수용
+            # 개선된 해(비용 감소)
             current_cost = new_cost
             if new_cost < best_cost:
                 best_cost = new_cost
                 best_chip = copy.deepcopy(chip)
             accept_str = "ACCEPT (better)"
+            accept_prob = 1.0
         else:
-            # 악화된 해 → 확률적으로 수용
+            # 악화된 해(비용 증가)
             if T < 1e-12:
                 accept_prob = 0.0
             else:
-                accept_prob = math.exp(-delta_e / T)
+                accept_prob = math.exp(-abs(delta_e) / T)
 
-            # 실제 수용/거부
             if random.random() < accept_prob:
                 current_cost = new_cost
                 if new_cost < best_cost:
@@ -460,18 +489,17 @@ def fast_sa(chip, max_iter=50, P=0.99, c=100, w=0.5, sample_moves=10):
                     best_chip = copy.deepcopy(chip)
                 accept_str = "ACCEPT (worse)"
             else:
-                # 거절 → 롤백
-                chip = old_chip_state
+                # 거부 -> 롤백
+                chip = copy.deepcopy(old_chip_state)
                 current_cost = old_cost
                 accept_str = "REJECT"
 
-        # (e) ── 여기서 Iter 정보, 온도, 수용확률 등 출력 ──
-        print(f"[Iter={n:3d}] Op={op.upper():5s}, T={T:7.3f}, ΔE={delta_e:7.2f}, "
+        print(f"[Iter={n:3d}] Op={op.upper():5s}, "
+              f"T={T:9.5f}, ΔE={delta_e:9.5f}, "
+              f"deltaCost={delta_cost:9.5f}, "
               f"Prob={accept_prob:6.4f}, {accept_str}")
 
-    # ───────── (4) 반복 종료 → best_chip 반환 ─────────
     return best_chip
-
 
 
 # ─────────────────────────────────────────────────────────────
@@ -501,9 +529,10 @@ def parse_yal(file_path):
             module_data['type'] = module_type
             continue
         if line.startswith("DIMENSIONS"):
-            dimensions = list(map(float, line.replace("DIMENSIONS", "").replace(";", "").split()))
+            dimensions = list(map(float, line.replace("DIMENSIONS", "")
+                                                  .replace(";", "").split()))
             x_coords = [dimensions[i] for i in range(0, len(dimensions), 2)]
-            y_coords = [dimensions[i + 1] for i in range(0, len(dimensions), 2)]
+            y_coords = [dimensions[i+1] for i in range(0, len(dimensions), 2)]
             module_data['width'] = max(x_coords) - min(x_coords)
             module_data['height'] = max(y_coords) - min(y_coords)
             continue
@@ -514,6 +543,7 @@ def parse_yal(file_path):
             in_network = False
             continue
         if line.startswith("ENDMODULE"):
+            # 모듈 완성
             modules.append(Module(
                 name=module_data['name'],
                 width=module_data['width'],
@@ -531,7 +561,7 @@ def parse_yal(file_path):
 
 
 # ─────────────────────────────────────────────────────────────
-# 5. 메인 실행 예시: "여러 번 무작위 섞고 베스트" 적용
+# 5. 메인 실행 예시
 # ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     # YAL 파일 읽어 모듈 리스트 생성
@@ -542,64 +572,71 @@ if __name__ == "__main__":
     chip = Chip(modules)
     chip.calculate_coordinates()
     chip.plot_b_tree()
+
+    # 초기 배치 스펙
     print("=== 초기 Chip spec ===")
     w_, h_, area_ = calculate_total_area(chip.modules)
-    print(f"면적: {area_}, HPWL: {calculate_hpwl(chip.modules)}")
+    hpwl_ = calculate_hpwl(chip.modules)
+    print(f"BoundingBox area = {area_}, HPWL = {hpwl_}")
+    init_area = area_
+    init_hpwl = hpwl_
+    init_cost = calc_combined_cost(chip.modules, w=0.5)
 
-    # 사용자에게 "여러 번 무작위 섞어볼래?" 물어보기
-    ans = input("초기 배치를 무작위로 여러 번 섞어보고, 가장 좋은 것을 골라볼까요? (y/n): ")
+    # "여러 번 무작위 섞기"
+    ans = input("초기 배치를 무작위로 여러 번 섞어보겠습니다. (y/n): ")
     if ans.lower().startswith('y'):
         tries = int(input("몇 번 섞어볼까요?: "))
 
-        # 현 상태 백업
-        old_modules = chip.modules[:]  # 복사용
-        old_build = copy.deepcopy(chip.root)  # 트리 구조도 혹시나 백업
+        old_modules = chip.modules[:]
+        old_tree = copy.deepcopy(chip.root)
         old_cost = calc_combined_cost(chip.modules, w=0.5)
 
         best_random_cost = old_cost
         best_modules_arr = old_modules[:]
 
         for i in range(tries):
-            # 1) 무작위 섞어서 배치
             new_cost = chip.randomize_b_tree(w=0.5)
             print(f"[Random Try {i+1}/{tries}] cost = {new_cost:.3f}")
-            w_, h_, area_ = calculate_total_area(chip.modules)
-            print(f"면적: {area_}, HPWL: {calculate_hpwl(chip.modules)}")
-            # 2) 최소 cost 갱신?
+
+            # 최소 cost 갱신?
             if new_cost < best_random_cost:
                 best_random_cost = new_cost
-                best_modules_arr = chip.modules[:]  # 이 배치 저장
+                best_modules_arr = chip.modules[:]
 
-            # 3) 다시 원래 모듈로 복원
+            # 복원
             chip.modules = old_modules[:]
-            chip.build_b_tree()
+            chip.root = copy.deepcopy(old_tree)
             chip.calculate_coordinates()
-        
+
         print(f"[결과] {tries}번 시도 중 최소 cost = {best_random_cost:.3f}")
         ans2 = input("이 배치를 초기배치로 적용할까요? (y/n): ")
         if ans2.lower().startswith('y'):
-            # 실제로 적용
             chip.modules = best_modules_arr[:]
             chip.build_b_tree()
             chip.calculate_coordinates()
-            print(f"초기배치를 cost={best_random_cost:.3f} 인 것으로 적용합니다.")
+            print(f"초기배치를 cost={best_random_cost:.3f}로 적용했습니다.")
             chip.plot_b_tree()
             plt.show()
 
-    # 그 후 FastSA 진행 여부
+    # FastSA 진행 여부
     answer = input("FastSA로 최적화를 진행하시겠습니까? (y/n): ")
     if answer.lower().startswith('y'):
         best_chip = fast_sa(
             chip,
-            max_iter=300,    # 반복 횟수
-            P=0.95,         # 초기 나쁜 해 수용 확률
-            c=130,
-            w=0.5,          # area vs HPWL 비중
-            sample_moves=5  # 초기 \Delta_{AVG} 측정 시 무작위 연산 횟수
+            max_iter=1000,
+            P=0.95,
+            c=100,
+            w=0.5,
+            sample_moves=5
         )
         print("=== FastSA 종료 결과 ===")
-        w_, h_, area_ = calculate_total_area(best_chip.modules)
-        print(f"면적: {area_}, HPWL: {calculate_hpwl(best_chip.modules)}")
+        final_w, final_h, final_area = calculate_total_area(best_chip.modules)
+        final_hpwl = calculate_hpwl(best_chip.modules)
+        final_cost = calc_combined_cost(best_chip.modules, w=0.5)
+        print(f"초기 BoundingBox area = {init_area}, HPWL = {init_hpwl}")
+        print(f"초기 cost = {init_cost:.3f}")
+        print(f"BoundingBox area = {final_area}, HPWL = {final_hpwl}")
+        print(f"최종 cost = {final_cost:.3f}")
 
         best_chip.plot_b_tree()
         plt.show()
