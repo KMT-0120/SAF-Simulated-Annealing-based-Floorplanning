@@ -7,6 +7,7 @@ import random
 # ─────────────────────────────────────────────────────────────
 # 1. Module, BTreeNode, Chip 클래스
 # ─────────────────────────────────────────────────────────────
+
 class Module:
     def __init__(self, name: str, width: float, height: float, module_type: str, net=None):
         self.name = name
@@ -30,7 +31,8 @@ class Module:
 
     def __str__(self):
         formatted_net = "\n    ".join(self.net)
-        return (f"Module(Name={self.name}, Width={self.width:.2f}, Height={self.height:.2f}, "
+        return (f"Module(Name={self.name}, "
+                f"Width={self.width:.2f}, Height={self.height:.2f}, "
                 f"Area={self.area:.2f}, Position=({self.x:.2f}, {self.y:.2f}), "
                 f"Order={self.order}, Type={self.type}, Net=\n    {formatted_net})")
 
@@ -41,6 +43,14 @@ class BTreeNode:
         self.left = None
         self.right = None
         self.parent = parent
+
+
+class ContourNode:
+    """Contour segment: [x1, x2) 구간에서 y2 높이"""
+    def __init__(self, x1, x2, y2):
+        self.x1 = x1
+        self.x2 = x2
+        self.y2 = y2
 
 
 class Chip:
@@ -61,28 +71,38 @@ class Chip:
             )
         self.build_b_tree()
 
+        # Contour line: list of ContourNode
+        self.contour_line = []
+        self.max_width = 0
+        self.max_height = 0
+
     # ─────────────────────────────────────────
-    # B*-Tree 구성 (간단한 완전 이진 트리 형태)
+    # B*-Tree 구성 (긴 "왼쪽 체인" 방식)
     # ─────────────────────────────────────────
     def build_b_tree(self):
+        """
+        모든 모듈을 "왼쪽 체인"으로 연결한다.
+        1) 첫 번째 모듈 -> root
+        2) 두 번째 모듈 -> root.left
+        3) 세 번째 모듈 -> root.left.left
+        ... 식으로 연결
+        """
         if not self.modules:
             self.root = None
             return
-        self.root = BTreeNode(self.modules[0])
-        queue = [self.root]
 
-        for module in self.modules[1:]:
-            parent = queue[0]
-            if parent.left is None:
-                parent.left = BTreeNode(module, parent)
-                queue.append(parent.left)
-            elif parent.right is None:
-                parent.right = BTreeNode(module, parent)
-                queue.append(parent.right)
-                queue.pop(0)
+        # 첫 번째 모듈 -> 루트 노드
+        self.root = BTreeNode(self.modules[0], parent=None)
+
+        # 나머지 모듈을 차례로 왼쪽 체인으로 연결
+        current = self.root
+        for mod in self.modules[1:]:
+            new_node = BTreeNode(mod, parent=current)
+            current.left = new_node
+            current = new_node
 
     def collect_all_nodes(self):
-        """BFS로 모든 노드 수집"""
+        """BFS로 모든 노드 수집 (시각화/연산용)"""
         if not self.root:
             return []
         result = []
@@ -202,7 +222,7 @@ class Chip:
 
         print(msg)
 
-        # 좌표 리셋 후 새로 배치
+        # 좌표 리셋 후 새로 배치 (Contour + BFS)
         for nd in all_nodes:
             nd.module.x = 0
             nd.module.y = 0
@@ -211,63 +231,150 @@ class Chip:
 
         return (msg, op)
 
-    def calculate_coordinates(self, node=None, x_offset=0, y_offset=0, placed_modules=None, order=1):
+    # ─────────────────────────────────────────
+    # Contour 기반 좌표 배치 (BFS)
+    # ─────────────────────────────────────────
+    def calculate_coordinates(self, node=None, x_offset=0, y_offset=0,
+                              placed_modules=None, order=1):
         """
-        B*-Tree 규칙대로 좌표 배치 + adjust_for_overlaps로 간단 충돌 회피
+        B*-Tree를 BFS로 순회하면서 Contour 기법으로 좌표 배치.
+        - 왼쪽 자식 => (부모.x + 부모.width)에서 x 시작
+        - 오른쪽 자식 => (부모.x)에서 x 시작
+        - y는 update_contour(...) 로 결정
         """
         if self.root is None:
             return
-        if node is None:
-            node = self.root
-        if placed_modules is None:
-            placed_modules = []
 
-        if node.parent is None:
-            x, y = x_offset, y_offset
-        else:
-            # 왼쪽 자식 = (부모.x + 부모.width, 부모.y)
-            if node == node.parent.left:
-                x = node.parent.module.x + node.parent.module.width
-                y = node.parent.module.y
-            else:  # 오른쪽 자식 = (부모.x, 부모.y + 부모.height)
-                x = node.parent.module.x
-                y = node.parent.module.y + node.parent.module.height
+        # 배치 전 초기화
+        self.contour_line = []
+        self.max_width = 0
+        self.max_height = 0
 
-        x, y = self.adjust_for_overlaps(node.module, x, y, placed_modules)
-        node.module.set_position(x, y, order)
-        placed_modules.append(node.module)
+        # 모든 노드 좌표 초기화
+        all_nodes = self.collect_all_nodes()
+        for nd in all_nodes:
+            nd.module.x = 0
+            nd.module.y = 0
+            nd.module.order = None
 
-        if node.left:
-            order = self.calculate_coordinates(node.left, x, y, placed_modules, order+1)
-        if node.right:
-            order = self.calculate_coordinates(node.right, x, y, placed_modules, order+1)
-        return order
+        # BFS
+        from collections import deque
+        queue = deque()
+        queue.append(self.root)
 
+        # 루트 배치
+        self.root.module.x = x_offset
+        self.root.module.y = y_offset
+        self.root.module.order = 1
+        # Contour 반영
+        root_x1 = x_offset
+        root_x2 = root_x1 + self.root.module.width
+        root_y2 = y_offset + self.root.module.height
+
+        # 첫 segment
+        self.contour_line.append(ContourNode(root_x1, root_x2, root_y2))
+        self.max_width = max(self.max_width, root_x2)
+        self.max_height = max(self.max_height, root_y2)
+
+        order_counter = 2
+
+        while queue:
+            parent_node = queue.popleft()
+            px = parent_node.module.x
+            py = parent_node.module.y
+            pw = parent_node.module.width
+            ph = parent_node.module.height
+
+            # 왼쪽, 오른쪽 자식
+            for child_node in (parent_node.left, parent_node.right):
+                if not child_node:
+                    continue
+
+                child_block = child_node.module
+
+                # 왼쪽 자식 => x = px + pw
+                # 오른쪽 자식 => x = px
+                if child_node == parent_node.left:
+                    x1 = px + pw
+                else:
+                    x1 = px
+
+                x2 = x1 + child_block.width
+
+                # update_contour로 y 계산
+                child_y = self.update_contour(x1, x2)
+                child_node.module.set_position(x1, child_y, order=order_counter)
+                order_counter += 1
+
+                # contour_line에 (x1,x2, child_y + child_block.height) 반영
+                top_y = child_y + child_block.height
+                self.insert_contour_segment(x1, x2, top_y)
+
+                # max width, height 갱신
+                if x2 > self.max_width:
+                    self.max_width = x2
+                if top_y > self.max_height:
+                    self.max_height = top_y
+
+                queue.append(child_node)
+
+    def update_contour(self, x1, x2):
+        """
+        (x1~x2)에 해당하는 구간에서 기존 segment들과 겹치는 부분 중
+        최대 y2를 찾아서, 그 위에 놓이도록 함.
+        """
+        base_y = 0
+        for seg in self.contour_line:
+            # [seg.x1, seg.x2]와 [x1,x2]가 겹치면
+            if not (seg.x2 <= x1 or seg.x1 >= x2):
+                base_y = max(base_y, seg.y2)
+        return base_y
+
+    def insert_contour_segment(self, x1, x2, new_top):
+        """
+        [x1,x2] 구간에 대해서, contour_line을 수정:
+          - 겹치는 구간 있으면 부분 삭제
+          - 새 (x1,x2,new_top) segment 삽입
+        """
+        updated = []
+        i = 0
+        while i < len(self.contour_line):
+            seg = self.contour_line[i]
+            # 완전히 왼쪽/오른쪽이면 유지
+            if seg.x2 <= x1 or seg.x1 >= x2:
+                updated.append(seg)
+            else:
+                # 겹친 경우 분할/삭제
+                if seg.x1 < x1 and seg.x2 > x2:
+                    # 세 조각: 왼쪽, [x1,x2], 오른쪽
+                    updated.append(ContourNode(seg.x1, x1, seg.y2))
+                    updated.append(ContourNode(x2, seg.x2, seg.y2))
+                elif seg.x1 < x1 and seg.x2 <= x2:
+                    # 왼쪽 조각만
+                    updated.append(ContourNode(seg.x1, x1, seg.y2))
+                elif seg.x1 >= x1 and seg.x2 > x2:
+                    # 오른쪽 조각만
+                    updated.append(ContourNode(x2, seg.x2, seg.y2))
+                # 전부 덮는 경우는 아무것도 추가 안 함
+            i += 1
+
+        # 새 segment 넣기
+        updated.append(ContourNode(x1, x2, new_top))
+        updated.sort(key=lambda s: s.x1)
+        self.contour_line = updated
+
+    # (기존 코드와의 호환성을 위해 adjust_for_overlaps, check_overlap 남겨두지만, 내부는 pass)
     def adjust_for_overlaps(self, module, x_start, y_start, placed_modules):
-        """
-        충돌 회피(간단 버전):
-         - (x_start, y_start)에서 시작해 겹치면 x += 1, 범위 초과 시 줄바꿈
-        """
-        x, y = x_start, y_start
-        while self.check_overlap(module, x, y, placed_modules):
-            x += 1
-            if x + module.width > self.bound.width:
-                x = 0
-                y += 1
-        return x, y
+        """Contour가 대신 처리하므로, 여기서는 아무것도 안 함"""
+        return x_start, y_start
 
     def check_overlap(self, module, x, y, placed_modules):
-        for placed in placed_modules:
-            overlap = (x < placed.x + placed.width and
-                       x + module.width > placed.x and
-                       y < placed.y + placed.height and
-                       y + module.height > placed.y)
-            if overlap:
-                return True
+        """Contour 기법을 사용하므로 실제로는 안 씀"""
         return False
 
     def is_within_bounds(self, module, x, y):
-        return (x + module.width <= self.bound.width) and (y + module.height <= self.bound.height)
+        return ((x + module.width) <= self.bound.width and
+                (y + module.height) <= self.bound.height)
 
     # ─────────────────────────────────────────
     # 시각화
@@ -280,7 +387,7 @@ class Chip:
         bound_rect = plt.Rectangle((0, 0), self.bound.width, self.bound.height,
                                    edgecolor='red', facecolor='none', lw=2)
         ax1.add_patch(bound_rect)
-        ax1.set_title("B*-Tree Physical Placement")
+        ax1.set_title("B*-Tree Physical Placement (Contour + BFS)")
         ax1.set_xlabel("X-coordinate")
         ax1.set_ylabel("Y-coordinate")
         ax1.set_xlim(0, self.bound.width + 100)
@@ -294,7 +401,7 @@ class Chip:
             G, pos, ax=ax2, with_labels=True, node_color="lightblue",
             edge_color="gray", node_size=2000, font_size=10
         )
-        ax2.set_title("B*-Tree Structure")
+        ax2.set_title("B*-Tree Structure (Left Chain)")
 
     def _plot_node(self, node, ax):
         if not node:
@@ -339,6 +446,7 @@ class Chip:
 # ─────────────────────────────────────────────────────────────
 # 2. Cost 계산 함수들 (간단 정규화)
 # ─────────────────────────────────────────────────────────────
+
 def calculate_hpwl(modules):
     """
     HPWL = (max_x - min_x) + (max_y - min_y)
@@ -388,6 +496,7 @@ def calc_combined_cost(modules, w=0.5):
 # ─────────────────────────────────────────────────────────────
 # 3. FastSA 함수 (수정된 \Delta_avg, \Delta_cost 정의 적용)
 # ─────────────────────────────────────────────────────────────
+
 def fast_sa(chip, max_iter=50, P=0.99, c=100, w=0.5, sample_moves=10):
     """
     FastSA + 간단 정규화 cost
@@ -421,7 +530,7 @@ def fast_sa(chip, max_iter=50, P=0.99, c=100, w=0.5, sample_moves=10):
     if delta_avg < 1e-12:
         delta_avg = 1.0
 
-    # 초기 온도 T1 = delta_avg / ln(P) * a (a는 보정계수)
+    # 초기 온도 T1 = delta_avg / math.log(P) * a (a는 보정계수)
     T1_scale_factor = 0.3
     T1 = abs(delta_avg / math.log(P)) * T1_scale_factor
     print(f"Initial T1 = {T1:.3f}")
@@ -433,16 +542,14 @@ def fast_sa(chip, max_iter=50, P=0.99, c=100, w=0.5, sample_moves=10):
 
     # (3) SA 반복
     for n in range(1, max_iter+1):
-
         # ── 이번 iteration에서의 \Delta_cost (평균 cost 변화량) 계산 ──
-        #    현재 상태에서 sample_moves번 move를 해보고 그 절댓값을 평균
         state_copy = copy.deepcopy(chip)
         cost_diffs_iter = []
         for _ in range(sample_moves):
             msg_tmp, op_tmp = chip.apply_random_operation()
             tmp_cost = calc_combined_cost(chip.modules, w)
             cost_diffs_iter.append(abs(tmp_cost - current_cost))
-            # 매번 롤백
+            # 롤백
             chip = copy.deepcopy(state_copy)
 
         if cost_diffs_iter:
@@ -468,7 +575,7 @@ def fast_sa(chip, max_iter=50, P=0.99, c=100, w=0.5, sample_moves=10):
 
         # SA 수용 여부(메트로폴리스 기준)
         if delta_e < 0:
-            # 개선된 해(비용 감소)
+            # 개선된 해
             current_cost = new_cost
             if new_cost < best_cost:
                 best_cost = new_cost
@@ -476,7 +583,7 @@ def fast_sa(chip, max_iter=50, P=0.99, c=100, w=0.5, sample_moves=10):
             accept_str = "ACCEPT (better)"
             accept_prob = 1.0
         else:
-            # 악화된 해(비용 증가)
+            # 악화된 해
             if T < 1e-12:
                 accept_prob = 0.0
             else:
@@ -505,6 +612,7 @@ def fast_sa(chip, max_iter=50, P=0.99, c=100, w=0.5, sample_moves=10):
 # ─────────────────────────────────────────────────────────────
 # 4. YAL 파일 파싱
 # ─────────────────────────────────────────────────────────────
+
 def parse_yal(file_path):
     """
     YAL 파일을 읽어 Module 객체 리스트로 반환
@@ -559,18 +667,17 @@ def parse_yal(file_path):
 
     return modules
 
-
 # ─────────────────────────────────────────────────────────────
 # 5. 메인 실행 예시
 # ─────────────────────────────────────────────────────────────
+
 if __name__ == "__main__":
-    # YAL 파일 읽어 모듈 리스트 생성
     yal_file = "./example/ami33.yal"
     modules = parse_yal(yal_file)
 
     # Chip 객체 생성 후, 초기 배치/시각화
     chip = Chip(modules)
-    chip.calculate_coordinates()
+    chip.calculate_coordinates()  # <-- Contour + BFS 배치
     chip.plot_b_tree()
 
     # 초기 배치 스펙
@@ -623,11 +730,11 @@ if __name__ == "__main__":
     if answer.lower().startswith('y'):
         best_chip = fast_sa(
             chip,
-            max_iter=1000,
+            max_iter=1000000,
             P=0.95,
             c=100,
             w=0.5,
-            sample_moves=5
+            sample_moves=4
         )
         print("=== FastSA 종료 결과 ===")
         final_w, final_h, final_area = calculate_total_area(best_chip.modules)
