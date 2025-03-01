@@ -477,6 +477,7 @@ def calculate_total_area(modules):
     return width, height, (width * height)
 
 def calc_combined_cost(modules, w=0.5, chip=None):
+    cost_scale = 2000
     if not modules:
         return 0.0
 
@@ -503,7 +504,7 @@ def calc_combined_cost(modules, w=0.5, chip=None):
             if (m.x + m.width) > chip.bound.width or (m.y + m.height) > chip.bound.height:
                 cost *= 1  # 원하는 값으로 조정 가능 (예: *= 5)
                 break
-    return cost
+    return cost*cost_scale
 """
     # (2) "왼쪽 자식이 부모 바로 오른쪽에 붙고, y범위가 겹쳐야 한다" 검사
     #     -> 이를 위반하면 cost *= 3
@@ -579,7 +580,7 @@ def fast_sa(chip, max_iter=50, P=0.99, c=100, w=0.5, sample_moves=10):
         delta_avg = 1.0
 
     # 초기 온도 T1 = delta_avg / math.log(P) * a (a는 보정계수)
-    T1_scale_factor = 0.99
+    T1_scale_factor = 1.0
     T1 = abs(delta_avg / math.log(P)) * T1_scale_factor
     print(f"Initial T1 = {T1:.3f}")
 
@@ -721,7 +722,7 @@ def parse_yal(file_path):
 # ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    yal_file = "./example/ami33.yal"
+    yal_file = "./example/ami49.yal"
     modules = parse_yal(yal_file)
 
     # Chip 객체 생성 후, 초기 배치/시각화
@@ -779,10 +780,10 @@ if __name__ == "__main__":
     if answer.lower().startswith('y'):
         best_chip = fast_sa(
             chip,
-            max_iter=1000,
+            max_iter=50000,
             P=0.95,
             c=100,
-            w=0.5,
+            w=1,
             sample_moves=4
         )
         print("=== FastSA 종료 결과 ===")
