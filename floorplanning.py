@@ -494,7 +494,7 @@ def calc_combined_cost(modules, w=0.5, chip=None):
     # 기존 area/HPWL 코스트 계산
     _, _, area_bb = calculate_total_area(modules)
     hpwl = calculate_hpwl(modules)
-    area_norm = area_bb / base_scale
+    area_norm = area_bb / base_scale if base_scale != 0 else 0
     hpwl_norm = hpwl / hpwl_scale if hpwl_scale > 0 else 0
     cost = w * area_norm + (1 - w) * hpwl_norm
 
@@ -539,9 +539,8 @@ def calc_combined_cost(modules, w=0.5, chip=None):
         if penalty_needed:
             cost *= 3  # 페널티 배수
 """
+
     
-
-
 # ─────────────────────────────────────────────────────────────
 # 3. FastSA 함수 (수정된 \Delta_avg, \Delta_cost 정의 적용)
 # ─────────────────────────────────────────────────────────────
@@ -561,7 +560,7 @@ def fast_sa(chip, max_iter=50, P=0.99, c=100, w=0.5, sample_moves=10):
     original_cost = calc_combined_cost(chip.modules, w, chip=chip)
 
     uphill_diffs = []
-    for _ in range(sample_moves):
+    for _ in range(sample_moves+5):
         msg, op = chip.apply_random_operation()
         new_cost = calc_combined_cost(chip.modules, w, chip=chip)
         delta_e = new_cost - original_cost
@@ -790,10 +789,19 @@ if __name__ == "__main__":
         final_w, final_h, final_area = calculate_total_area(best_chip.modules)
         final_hpwl = calculate_hpwl(best_chip.modules)
         final_cost = calc_combined_cost(best_chip.modules, w=0.5, chip=best_chip)
+
+        # dead space 계산
+        total_module_area = sum(m.area for m in best_chip.modules)
+        if final_area > 0:
+            dead_space_rate = ((final_area - total_module_area) / final_area) * 100
+        else:
+            dead_space_rate = 0.0
+
         print(f"초기 BoundingBox area = {init_area}, HPWL = {init_hpwl}")
         print(f"초기 cost = {init_cost:.3f}")
         print(f"BoundingBox area = {final_area}, HPWL = {final_hpwl}")
         print(f"최종 cost = {final_cost:.3f}")
+        print(f"Dead space rate = {dead_space_rate:.3f}%")
 
         best_chip.plot_b_tree()
         plt.show()
