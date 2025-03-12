@@ -1,17 +1,19 @@
-#해당 주석 문단은 지우지말것(특히 GPT 사용시, 지워지는지 또한 확인한 후 다시 추가)
+#해당 주석 문단은 지우지말것(특히 GPT 사용시, 지워지는지 또한 확인한 후 다시 추가), GPT 돌릴떄 함수 이름, 변수명 변경하지 말것
 #3/8 iter 5000번마다 plot, SA종료 후 T 변화 추이 그래프 plot 추가
 # 사용하지 않는 과거 코드 삭제(adjust_for_overlaps, check_overlap, is_within_bounds)
 # plot관련해서 노드 크기/폰트 크기 조정, 노드 간격 조정
 # c factor 조정
+
+#3/9 GSRC 적용, 초기해 leftchain -> random으로 변경
 
 import matplotlib.pyplot as plt
 import networkx as nx
 import copy
 import math
 import random
-
+import re
 # ─────────────────────────────────────────────────────────────
-# 1. Module, BTreeNode, Chip 클래스 (Left-Chain)
+# 1. Module, BTreeNode, Chip 클래스 (Random)
 # ─────────────────────────────────────────────────────────────
 
 class Module:
@@ -80,16 +82,21 @@ class Chip:
         self.max_height = 0
 
     def build_b_tree(self):
-        """왼쪽 체인: 첫 모듈 -> 루트, 나머지는 왼쪽으로 계속 연결"""
         if not self.modules:
             self.root = None
             return
-        self.root = BTreeNode(self.modules[0], parent=None)
-        current = self.root
-        for mod in self.modules[1:]:
-            new_node = BTreeNode(mod, parent=current)
-            current.left = new_node
-            current = new_node
+    
+        # 완전 왼쪽 체인 대신, 랜덤하게 parent를 골라 left/right에 붙이는 식으로
+        random_mods = self.modules[:]
+        random.shuffle(random_mods)
+    
+        self.root = BTreeNode(random_mods[0], parent=None)
+        for mod in random_mods[1:]:
+            node = BTreeNode(mod)
+            # 트리 전체에서 '비어있는 left/right'를 랜덤 선택해 붙이기
+            cand_nodes = self.find_possible_parents()
+            chosen_parent = random.choice(cand_nodes)
+            side = self.attach_node(chosen_parent, node)
 
     def collect_all_nodes(self):
         if not self.root:
@@ -297,10 +304,6 @@ class Chip:
         pos={}
         self.add_edges(self.root,None,0,0,G,pos)
 
-        # 노드 사이를 더 크게 벌리기 위해 x좌표, y좌표를 확대
-        # 예: pos[node_name]=(x_pos*2, -depth*2). 오른쪽 자식 이동도 +2
-        # 아래 add_edges에서 반영
-
         nx.draw(G, pos, ax=ax2, with_labels=True, node_color="lightblue",
                 edge_color="black", node_size=600, font_size=7)
         if iteration is not None:
@@ -408,7 +411,7 @@ def calc_combined_cost(modules,w=0.5,chip=None):
 
 def fast_sa(chip, max_iter=50, P=0.99, c=100, w=0.5, sample_moves=10):
     import copy, math, random
-
+    T1_scale_factor=3.0
     orig_st=copy.deepcopy(chip)
     orig_cost=calc_combined_cost(chip.modules,w,chip=chip)
     up_diffs=[]
@@ -426,7 +429,7 @@ def fast_sa(chip, max_iter=50, P=0.99, c=100, w=0.5, sample_moves=10):
         delta_avg=1.0
     if delta_avg<1e-12:
         delta_avg=1.0
-    T1=abs(delta_avg / math.log(P))
+    T1=abs(delta_avg / math.log(P)) * T1_scale_factor
     print(f"Initial T1={T1:.3f}")
 
     best_chip=copy.deepcopy(chip)
@@ -492,7 +495,7 @@ def fast_sa(chip, max_iter=50, P=0.99, c=100, w=0.5, sample_moves=10):
               f"Prob={acc_prob:6.4f}, {acc_str}")
 
         # n%5000==0 -> 배치도 plot
-        if n%5000==0:
+        if n%10000==0:
             chip.plot_b_tree(iteration=n)
             plt.show()
 
@@ -508,7 +511,7 @@ def fast_sa(chip, max_iter=50, P=0.99, c=100, w=0.5, sample_moves=10):
 
 
 # ─────────────────────────────────────────────────────────────
-# 4. YAL 파일 파싱
+# 4. 파일 파싱(Yal, GSRC)
 # ─────────────────────────────────────────────────────────────
 
 def parse_yal(file_path):
@@ -557,14 +560,98 @@ def parse_yal(file_path):
             continue
     return modules
 
+def parse_gsrc_blocks(blocks_file):
+    """
+    Terminal( pX )은 무시하고, sbX 블록만 파싱
+    """
+    modules=[]
+    pattern=re.compile(r"^(sb\d+)\s+\S+\s+(\d+)\s+(.*)$")
+    with open(blocks_file,'r') as f:
+        lines=f.readlines()
+
+    for line in lines:
+        line=line.strip()
+        if not line or line.startswith('#') or line.startswith('UCSC'):
+            continue
+
+        # 만약 p1 terminal 나오면 => 그냥 skip
+        if line.startswith('p') and 'terminal' in line:
+            continue
+
+        match=pattern.match(line)
+        if match:
+            blk_name=match.group(1)    # sb0, sb1 ...
+            coords=match.group(3)     # (0,0) ...
+            cpat=re.compile(r"\(([\-\d\.]+)\s*,\s*([\-\d\.]+)\)")
+            found = cpat.findall(coords)
+            xs, ys=[],[]
+            for (sx,sy) in found:
+                xs.append(float(sx))
+                ys.append(float(sy))
+            minx, maxx = min(xs), max(xs)
+            miny, maxy = min(ys), max(ys)
+            w_=maxx-minx
+            h_=maxy-miny
+            modules.append(Module(blk_name,w_,h_,'BLOCK',net=[]))
+
+    return modules
+
+def parse_gsrc_nets(nets_file, modules):
+    """
+    pX 등 terminal은 이미 parse_gsrc_blocks에서 안 넣었으므로,
+    name_map에 없는 pin_name => 무시됨
+    """
+    name_map={m.name:m for m in modules}
+    i=0
+    with open(nets_file,'r') as f:
+        lines=f.readlines()
+    net_id=0
+    while i<len(lines):
+        line=lines[i].strip()
+        if not line or line.startswith('#') or line.startswith('UCLA'):
+            i+=1
+            continue
+        if line.startswith('NetDegree'):
+            parts=line.split(':')
+            deg_str=(parts[1].strip() if len(parts)>1 else "0")
+            try:
+                deg=int(deg_str)
+            except:
+                deg=0
+            net_name=f"Net{net_id}"
+            net_id+=1
+            pins=[]
+            for _ in range(deg):
+                i+=1
+                pin_ln=lines[i].strip()
+                pin_prt=pin_ln.split()
+                if pin_prt:
+                    pin_name=pin_prt[0]
+                    # pX 는 name_map에 없으므로, 자동 무시
+                    if pin_name in name_map:
+                        pins.append(pin_name)
+            for pn in pins:
+                name_map[pn].net.append(net_name)
+        i+=1
+    return modules
+
+
 
 # ─────────────────────────────────────────────────────────────
 # 5. 메인 실행 예시 (Left-Chain + 노드 간격/크기 조정, 서브트리 SA 제거)
 # ─────────────────────────────────────────────────────────────
 
 if __name__=="__main__":
-    yal_file="./example/ami49.yal"
-    modules=parse_yal(yal_file)
+    # (1) Yal 파일 파싱
+    #yal_file="./example/ami49.yal"
+    #modules=parse_yal(yal_file)
+
+    # (2) GSRC blocks & nets 파싱 (터미널 무시)
+    blocks_file = "./example/n300.blocks"
+    nets_file   = "./example/n300.nets"
+    modules = parse_gsrc_blocks(blocks_file)
+    modules = parse_gsrc_nets(nets_file, modules)
+
 
     chip=Chip(modules)
     chip.calculate_coordinates()
@@ -580,7 +667,7 @@ if __name__=="__main__":
     if ans.lower().startswith('y'):
         best_chip=fast_sa(
             chip,
-            max_iter=50000,
+            max_iter=100000,
             P=0.95,
             c=100,
             w=1,
