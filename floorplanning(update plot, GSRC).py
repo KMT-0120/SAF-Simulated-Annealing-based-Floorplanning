@@ -5,6 +5,7 @@
 # c factor 조정
 
 #3/9 GSRC 적용, 초기해 leftchain -> random으로 변경
+#3/15  왼쪽 자식의 배치가 부모노드와 너무 조금 떨어져있던 버그 수정
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -236,16 +237,16 @@ class Chip:
             self.max_height=top_y
         order+=1
 
-        # 왼쪽 => x+width+10
+        # 왼쪽 => x+width
         if node.left:
-            lx=node.module.x+node.module.width+10
+            lx=node.module.x+node.module.width
             rx=lx+node.left.module.width
             ly=self.update_contour(lx,rx)
             order=self._dfs_place_node(node.left,order,lx,ly)
 
-        # 오른쪽 => x+10
+        # 오른쪽 => x
         if node.right:
-            rxs=node.module.x+10
+            rxs=node.module.x
             rxe=rxs+node.right.module.width
             rys=self.update_contour(rxs,rxe)
             order=self._dfs_place_node(node.right,order,rxs,rys)
@@ -411,7 +412,7 @@ def calc_combined_cost(modules,w=0.5,chip=None):
 
 def fast_sa(chip, max_iter=50, P=0.99, c=100, w=0.5, sample_moves=10):
     import copy, math, random
-    T1_scale_factor=3.0
+    T1_scale_factor=40.0
     orig_st=copy.deepcopy(chip)
     orig_cost=calc_combined_cost(chip.modules,w,chip=chip)
     up_diffs=[]
@@ -495,9 +496,9 @@ def fast_sa(chip, max_iter=50, P=0.99, c=100, w=0.5, sample_moves=10):
               f"Prob={acc_prob:6.4f}, {acc_str}")
 
         # n%5000==0 -> 배치도 plot
-        if n%10000==0:
-            chip.plot_b_tree(iteration=n)
-            plt.show()
+        #if n%40000==0:
+        #    best_chip.plot_b_tree(iteration=n)
+        #    plt.show()
 
     # 최종 온도 그래프
     plt.figure()
@@ -667,11 +668,11 @@ if __name__=="__main__":
     if ans.lower().startswith('y'):
         best_chip=fast_sa(
             chip,
-            max_iter=100000,
+            max_iter=500000,
             P=0.95,
             c=100,
             w=1,
-            sample_moves=4
+            sample_moves=2
         )
         final_w,final_h,final_area=calculate_total_area(best_chip.modules)
         final_hpwl=calculate_hpwl(best_chip.modules)
