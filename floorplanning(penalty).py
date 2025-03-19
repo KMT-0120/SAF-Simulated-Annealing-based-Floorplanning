@@ -5,7 +5,12 @@
 # c factor 조정
 
 #3/9 GSRC 적용, 초기해 leftchain -> random으로 변경
-#3/15  왼쪽 자식의 배치가 부모노드와 너무 조금 떨어져있던 버그 수정
+#3/15 왼쪽 자식의 배치가 부모노드와 너무 조금 떨어져있던 버그 수정
+#3/18 cost에 penalty추가, 정규화는 area_norm으로 해둠, 
+#     area_norm이 HPWL_norm과 너무 크게 차이나는것을 확인하였기에(EX:4, 2000) area_norm * 500해서 사용
+#     초기, 마지막 비용값을 더 잘 확인하기 위해 get_nomalized_values()함수 추가(cal_cost와 매커니즘 같으니 cal_cost 수정시에 같이 수정해줄것)
+#     default_parent를 1000, 1000대신 전체 module의 넓이*1.2로 설정
+ 
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -16,8 +21,7 @@ import re
 
 # ─────────────────────────────────────────────────────────────
 # 1. Module, BTreeNode, Chip 클래스 (Random)
-# ─────────────────────────────────────────────
-
+# ─────────────────────────────────────────────────────────────
 class Module:
     def __init__(self, name: str, width: float, height: float, module_type: str, net=None):
         self.name = name
@@ -46,14 +50,12 @@ class Module:
                 f"Area={self.area:.2f}, Position=({self.x:.2f}, {self.y:.2f}), "
                 f"Order={self.order}, Type={self.type}, Net=\n    {formatted_net})")
 
-
 class BTreeNode:
     def __init__(self, module, parent=None):
         self.module = module
         self.left = None
         self.right = None
         self.parent = parent
-
 
 class ContourNode:
     """Contour segment: [x1, x2) 구간에서 y2 높이"""
@@ -62,23 +64,27 @@ class ContourNode:
         self.x2 = x2
         self.y2 = y2
 
-
 class Chip:
-    """
-    B*-Tree (Left-Chain). 부모와 자식 간 +10 오프셋.
-    """
-    def __init__(self, modules, default_width=1000, default_height=1000):
-        # 사용자 요청: parent 모듈이 없으면 default_width, default_height 짜리를 쓰기는 하지만
-        # 이 코드는 유지하되, cost 계산에서도 DefaultParent를 bound로 그대로 사용하도록 변경
+    def __init__(self, modules):
+        """
+        parent가 없는 경우에는 전체 module들의 area합 * 1.2와 동일한
+        정사각형을 DefaultParent로 설정합니다.
+        """
+        # PARENT 모듈 외의 모든 모듈
         self.modules = [m for m in modules if m.type != 'PARENT']
+
+        # PARENT 모듈이 있는지 확인
         self.bound = next((m for m in modules if m.type == 'PARENT'), None)
         if not self.bound:
+            total_area = sum(m.area for m in self.modules)
+            side = math.sqrt(total_area * 1.2)
             self.bound = Module(
                 name='DefaultParent',
-                width=default_width,
-                height=default_height,
+                width=side,
+                height=side,
                 module_type='PARENT'
             )
+
         self.build_b_tree()
 
         self.contour_line = []
@@ -117,7 +123,7 @@ class Chip:
         return result
 
     # ─────────────────────────────────────────
-    # 연산들
+    # B*-tree 연산들
     def rotate_node(self,node):
         node.module.rotate()
 
@@ -285,7 +291,7 @@ class Chip:
         return calc_combined_cost(self.modules,w,chip=self)
 
     # ─────────────────────────────────────────
-    # 좌표 배치 (Contour + DFS, +10)
+    # 좌표 배치 (Contour + DFS)
     def calculate_coordinates(self):
         if not self.root:
             return
@@ -467,7 +473,6 @@ def calc_combined_cost(modules, w=0.5, chip=None, r=1.0):
     cost = w * area_norm + (1-w) * hpwl_norm + r * penalty_norm
     여기서 penalty = sum( (초과_width^2) + (초과_height^2) ) for all modules that cross boundary
     (penalty_norm = penalty / base_scale)
-    parent가 없으면 DefaultParent(width, height)를 그대로 사용
     """
     cost_scale=100
     if not modules:
@@ -503,8 +508,9 @@ def calc_combined_cost(modules, w=0.5, chip=None, r=1.0):
     hpwl_norm    = hpwl/(2*math.sqrt(net_area_sum)) if net_area_sum>0 else 0
     penalty_norm = penalty_sum/base_scale if base_scale else 0
 
-    area_norm *= 500 # HPWL과 크기 비슷하게
-    
+    # area_norm과 HPWL_norm의 스케일 차를 줄이기 위해 area_norm에 500 곱함
+    area_norm *= 500
+
     # (5) 최종 cost
     cost_value = w*area_norm + (1-w)*hpwl_norm + r*penalty_norm
     return cost_value * cost_scale
@@ -544,7 +550,8 @@ def get_normalized_values(modules, chip=None, w=0.5, r=1.0):
     hpwl_norm    = hpwl / (2*math.sqrt(net_area_sum)) if net_area_sum>0 else 0
     penalty_norm = penalty_sum / base_scale if base_scale else 0
 
-    area_norm *= 500 # HPWL과 크기 비슷하게
+    # area_norm과 HPWL_norm의 스케일 차를 줄이기 위해 area_norm에 500 곱함
+    area_norm *= 500
 
     return (area_norm, hpwl_norm, penalty_norm)
 
@@ -665,7 +672,8 @@ def fast_sa(chip, max_iter=50, P=0.99, c=100, w=0.5, sample_moves=10, r=1.0):
         print(f"[Iter={n:3d}] BestLocalOpData={best_op_data}, BestLocalCost={best_local_cost:.3f}, "
               f"ReAppMsg={re_msg}, T={T:9.5f}, dE={dE:9.5f}, Prob={acc_prob:6.4f}, {acc_str}")
 
-        # (f) n%5000 == 0 시점 plot (여기선 n%40000으로 설정)
+        # (f) n%4000 == 0 시점 plot (사용자가 3/8에 5000번마다 plot이라 하였으나
+        #   본 예시에서는 너무 커서 40000등으로 조건만 변경해둠)
         if n % 40000 == 0:
             best_chip.plot_b_tree(iteration=n)
             plt.show()
