@@ -10,6 +10,8 @@
 #     area_norm이 HPWL_norm과 너무 크게 차이나는것을 확인하였기에(EX:4, 2000) area_norm * 500해서 사용
 #     초기, 마지막 비용값을 더 잘 확인하기 위해 get_nomalized_values()함수 추가(cal_cost와 매커니즘 같으니 cal_cost 수정시에 같이 수정해줄것)
 #     default_parent를 1000, 1000대신 전체 module의 넓이*1.2로 설정
+#     sample_moves가 버려지는 경우를 대비해 sample_moves 전부를 기억해두고 제일 좋았던 코스트 변화량을 적용
+#     left-chain 적용
  
 
 import matplotlib.pyplot as plt
@@ -18,7 +20,8 @@ import copy
 import math
 import random
 import re
-
+import sys
+sys.setrecursionlimit(10000)
 # ─────────────────────────────────────────────────────────────
 # 1. Module, BTreeNode, Chip 클래스 (Random)
 # ─────────────────────────────────────────────────────────────
@@ -77,7 +80,7 @@ class Chip:
         self.bound = next((m for m in modules if m.type == 'PARENT'), None)
         if not self.bound:
             total_area = sum(m.area for m in self.modules)
-            side = math.sqrt(total_area * 1.2)
+            side = math.sqrt(total_area)
             self.bound = Module(
                 name='DefaultParent',
                 width=side,
@@ -92,21 +95,26 @@ class Chip:
         self.max_height = 0
 
     def build_b_tree(self):
+        """
+        모든 모듈을 "왼쪽 체인"으로 연결한다.
+        1) 첫 번째 모듈 -> root
+        2) 두 번째 모듈 -> root.left
+        3) 세 번째 모듈 -> root.left.left
+        ... 식으로 연결
+        """
         if not self.modules:
             self.root = None
             return
-    
-        # 완전 왼쪽 체인 대신, 랜덤하게 parent를 골라 left/right에 붙이는 식으로
-        random_mods = self.modules[:]
-        random.shuffle(random_mods)
-    
-        self.root = BTreeNode(random_mods[0], parent=None)
-        for mod in random_mods[1:]:
-            node = BTreeNode(mod)
-            # 트리 전체에서 '비어있는 left/right'를 랜덤 선택해 붙이기
-            cand_nodes = self.find_possible_parents()
-            chosen_parent = random.choice(cand_nodes)
-            side = self.attach_node(chosen_parent, node)
+
+        # 첫 번째 모듈 -> 루트 노드
+        self.root = BTreeNode(self.modules[0], parent=None)
+
+        # 나머지 모듈을 차례로 왼쪽 체인으로 연결
+        current = self.root
+        for mod in self.modules[1:]:
+            new_node = BTreeNode(mod, parent=current)
+            current.left = new_node
+            current = new_node
 
     def collect_all_nodes(self):
         if not self.root:
@@ -548,7 +556,8 @@ def get_normalized_values(modules, chip=None, w=0.5, r=1.0):
 
     area_norm    = (area_bb / base_scale) if base_scale else 0
     hpwl_norm    = hpwl / (2*math.sqrt(net_area_sum)) if net_area_sum>0 else 0
-    penalty_norm = penalty_sum / base_scale if base_scale else 0
+    penalty_norm = penalty_sum * 2 /base_scale if base_scale else 0
+    #/ base_scale if base_scale else 0
 
     # area_norm과 HPWL_norm의 스케일 차를 줄이기 위해 area_norm에 500 곱함
     area_norm *= 500
@@ -674,9 +683,9 @@ def fast_sa(chip, max_iter=50, P=0.99, c=100, w=0.5, sample_moves=10, r=1.0):
 
         # (f) n%4000 == 0 시점 plot (사용자가 3/8에 5000번마다 plot이라 하였으나
         #   본 예시에서는 너무 커서 40000등으로 조건만 변경해둠)
-        if n % 40000 == 0:
-            best_chip.plot_b_tree(iteration=n)
-            plt.show()
+        #if n % 10000 == 0:
+        #    best_chip.plot_b_tree(iteration=n)
+        #    plt.show()
 
     # ─────────────────────────────────────────────────────────────
     # 마무리: T vs Iter 플롯
@@ -826,8 +835,8 @@ if __name__=="__main__":
     #modules=parse_yal(yal_file)
 
     # (2) GSRC blocks & nets 파싱 (터미널 무시)
-    blocks_file = "C:/Users/KMT/Desktop/Thermal aware placement (1)/code/yal/example/n300.blocks"
-    nets_file   = "C:/Users/KMT/Desktop/Thermal aware placement (1)/code/yal/example/n300.nets"
+    blocks_file = "./example/n300.blocks"
+    nets_file   = "./example/n300.nets"
     modules = parse_gsrc_blocks(blocks_file)
     modules = parse_gsrc_nets(nets_file, modules)
 
@@ -853,11 +862,11 @@ if __name__=="__main__":
     if ans.lower().startswith('y'):
         best_chip = fast_sa(
             chip,
-            max_iter=100000,
+            max_iter=150000,
             P=0.95,
             c=100,
             w=0.66,
-            sample_moves=3,
+            sample_moves=5,
             r=1.0  # penalty 가중치
         )
 
