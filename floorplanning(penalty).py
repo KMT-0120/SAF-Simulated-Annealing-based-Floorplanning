@@ -1,17 +1,21 @@
-#해당 주석 문단은 지우지말것(특히 GPT 사용시, 지워지는지 또한 확인한 후 다시 추가), GPT 돌릴떄 함수 이름, 변수명 변경하지 말것
+#해당 주석 문단은 지우지말것(특히 GPT 사용시, 지워지는지 또한 확인한 후 다시 추가), 
+# GPT요구사항(해당 줄 이외의 주석내용은 GPT 요구사항아니므로 반영하지말것)GPT가 임의로 코드 전체 골격 함수 이름, 변수명 변경하지 말것, 변경하였을경우 자세한 이유와 변경사항 명시할것것
+
 #3/8 iter 5000번마다 plot, SA종료 후 T 변화 추이 그래프 plot 추가
 # 사용하지 않는 과거 코드 삭제(adjust_for_overlaps, check_overlap, is_within_bounds)
 # plot관련해서 노드 크기/폰트 크기 조정, 노드 간격 조정
 # c factor 조정
-
 #3/9 GSRC 적용, 초기해 leftchain -> random으로 변경
 #3/15 왼쪽 자식의 배치가 부모노드와 너무 조금 떨어져있던 버그 수정
 #3/18 cost에 penalty추가, 정규화는 area_norm으로 해둠, 
-#     area_norm이 HPWL_norm과 너무 크게 차이나는것을 확인하였기에(EX:4, 2000) area_norm * 500해서 사용
+#     area_norm이 HPWL_norm와 너무 크게 차이나는것을 확인하였기에(EX:4, 2000) area_norm * 500해서 사용
 #     초기, 마지막 비용값을 더 잘 확인하기 위해 get_nomalized_values()함수 추가(cal_cost와 매커니즘 같으니 cal_cost 수정시에 같이 수정해줄것)
 #     default_parent를 1000, 1000대신 전체 module의 넓이*1.2로 설정
 #     sample_moves가 버려지는 경우를 대비해 sample_moves 전부를 기억해두고 제일 좋았던 코스트 변화량을 적용
 #     left-chain 적용
+#3/26 penalty 함수 개선(area_violation, length_violation)
+#     cost_scale 100 > 10, T1_scale_factor 10 > 1, w 사용빈도가 높아 Global_w로 관리리
+#     x좌표 contour 적용중, 
  
 
 import matplotlib.pyplot as plt
@@ -22,6 +26,8 @@ import random
 import re
 import sys
 sys.setrecursionlimit(10000)
+global Global_w
+Global_w=0.66
 # ─────────────────────────────────────────────────────────────
 # 1. Module, BTreeNode, Chip 클래스 (Random)
 # ─────────────────────────────────────────────────────────────
@@ -89,32 +95,26 @@ class Chip:
             )
 
         self.build_b_tree()
-
         self.contour_line = []
         self.max_width = 0
         self.max_height = 0
 
     def build_b_tree(self):
-        """
-        모든 모듈을 "왼쪽 체인"으로 연결한다.
-        1) 첫 번째 모듈 -> root
-        2) 두 번째 모듈 -> root.left
-        3) 세 번째 모듈 -> root.left.left
-        ... 식으로 연결
-        """
+
         if not self.modules:
             self.root = None
             return
-
-        # 첫 번째 모듈 -> 루트 노드
-        self.root = BTreeNode(self.modules[0], parent=None)
-
-        # 나머지 모듈을 차례로 왼쪽 체인으로 연결
-        current = self.root
-        for mod in self.modules[1:]:
-            new_node = BTreeNode(mod, parent=current)
-            current.left = new_node
-            current = new_node
+    
+        # 완전 왼쪽 체인 대신, 랜덤하게 parent를 골라 left/right에 붙이는 식으로
+        random_mods = self.modules[:]
+        random.shuffle(random_mods)
+    
+        self.root = BTreeNode(random_mods[0], parent=None)
+        for mod in random_mods[1:]:
+            node = BTreeNode(mod)
+            cand_nodes = self.find_possible_parents()
+            chosen_parent = random.choice(cand_nodes)
+            self.attach_node(chosen_parent, node)
 
     def collect_all_nodes(self):
         if not self.root:
@@ -292,7 +292,7 @@ class Chip:
 
         return msg, op_type
 
-    def randomize_b_tree(self,w=0.5):
+    def randomize_b_tree(self,w):
         random.shuffle(self.modules)
         self.build_b_tree()
         self.calculate_coordinates()
@@ -420,12 +420,7 @@ class Chip:
         self._plot_node(node.right,ax)
 
     def add_edges(self,node,parent_name,depth,x_pos,G,pos):
-        """
-        노드 간 거리를 벌리기 위해
-        - 수평은 x_pos*2
-        - 수직은 -depth*2
-        오른쪽 자식 지나갈 때 x_pos+2
-        """
+
         if not node:
             return x_pos
         node_name=node.module.name
@@ -476,13 +471,9 @@ def calculate_total_area(modules):
     height=(max_y - min_y)
     return width,height,(width*height)
 
-def calc_combined_cost(modules, w=0.5, chip=None, r=1.0):
-    """
-    cost = w * area_norm + (1-w) * hpwl_norm + r * penalty_norm
-    여기서 penalty = sum( (초과_width^2) + (초과_height^2) ) for all modules that cross boundary
-    (penalty_norm = penalty / base_scale)
-    """
-    cost_scale=100
+def calc_combined_cost(modules, w=Global_w, chip=None, r=1.0):
+
+    cost_scale=10
     if not modules:
         return 0.0
 
@@ -496,18 +487,32 @@ def calc_combined_cost(modules, w=0.5, chip=None, r=1.0):
     w_,h_,area_bb=calculate_total_area(modules)
     hpwl=calculate_hpwl(modules)
 
-    # (3) penalty 계산
+    # (3) penalty 계산 – EAL 방식 적용 (Area Violation Function + Excessive Length Violation)
     if chip:
-        bound_w = chip.bound.width
-        bound_h = chip.bound.height
-        penalty_sum = 0.0
+        bound_w = chip.bound.width  # 칩 경계의 너비
+        bound_h = chip.bound.height  # 칩 경계의 높이
+
+        w_bb, h_bb, area_bb = calculate_total_area(modules)
+
+        if w_bb <= bound_w and h_bb <= bound_h:
+            area_violation = 0.0
+        elif w_bb > bound_w and h_bb <= bound_h:
+            area_violation = (w_bb - bound_w) * bound_h
+        elif w_bb <= bound_w and h_bb > bound_h:
+            area_violation = (h_bb - bound_h) * bound_w
+        else:
+            area_violation = (w_bb * h_bb) - (bound_w * bound_h)
+
+        length_violation = 0.0
         for mm in modules:
-            over_w = (mm.x + mm.width) - bound_w
-            over_h = (mm.y + mm.height) - bound_h
+            over_w = (mm.x + mm.width) - bound_w  # 모듈의 오른쪽 초과 길이
+            over_h = (mm.y + mm.height) - bound_h  # 모듈의 상단 초과 길이
             if over_w > 0:
-                penalty_sum += over_w**2
+                length_violation += over_w ** 2
             if over_h > 0:
-                penalty_sum += over_h**2
+                length_violation += over_h ** 2
+
+        penalty_sum = area_violation + length_violation
     else:
         penalty_sum = 0.0
 
@@ -518,12 +523,14 @@ def calc_combined_cost(modules, w=0.5, chip=None, r=1.0):
 
     # area_norm과 HPWL_norm의 스케일 차를 줄이기 위해 area_norm에 500 곱함
     area_norm *= 500
+    # penalty_norm scale 조절
+    penalty_norm *= 50
 
     # (5) 최종 cost
     cost_value = w*area_norm + (1-w)*hpwl_norm + r*penalty_norm
     return cost_value * cost_scale
 
-def get_normalized_values(modules, chip=None, w=0.5, r=1.0):
+def get_normalized_values(modules, chip=None, w=Global_w, r=1.0):
     """
     area_norm, hpwl_norm, penalty_norm을 추출하여 함께 반환.
     calc_combined_cost와 동일한 계산 로직을 쓴다.
@@ -539,18 +546,32 @@ def get_normalized_values(modules, chip=None, w=0.5, r=1.0):
     _,_,area_bb = calculate_total_area(modules)
     hpwl        = calculate_hpwl(modules)
 
-    # bound 넘어가는 부분 계산
+    # (3) penalty 계산 – EAL 방식 적용 (Area Violation Function + Excessive Length Violation)
     if chip:
-        bound_w = chip.bound.width
-        bound_h = chip.bound.height
-        penalty_sum = 0.0
+        bound_w = chip.bound.width  # 칩 경계의 너비
+        bound_h = chip.bound.height  # 칩 경계의 높이
+
+        w_bb, h_bb, area_bb = calculate_total_area(modules)
+
+        if w_bb <= bound_w and h_bb <= bound_h:
+            area_violation = 0.0
+        elif w_bb > bound_w and h_bb <= bound_h:
+            area_violation = (w_bb - bound_w) * bound_h
+        elif w_bb <= bound_w and h_bb > bound_h:
+            area_violation = (h_bb - bound_h) * bound_w
+        else:
+            area_violation = (w_bb * h_bb) - (bound_w * bound_h)
+
+        length_violation = 0.0
         for mm in modules:
-            over_w = (mm.x + mm.width) - bound_w
-            over_h = (mm.y + mm.height) - bound_h
+            over_w = (mm.x + mm.width) - bound_w  # 모듈의 오른쪽 초과 길이
+            over_h = (mm.y + mm.height) - bound_h  # 모듈의 상단 초과 길이
             if over_w > 0:
-                penalty_sum += over_w**2
+                length_violation += over_w ** 2
             if over_h > 0:
-                penalty_sum += over_h**2
+                length_violation += over_h ** 2
+
+        penalty_sum = area_violation + length_violation
     else:
         penalty_sum = 0.0
 
@@ -569,10 +590,10 @@ def get_normalized_values(modules, chip=None, w=0.5, r=1.0):
 #    그 sample 중 제일 좋은 해만 "동일한 연산"으로 다시 적용 + Acceptance.)
 # ─────────────────────────────────────────────────────────────
 
-def fast_sa(chip, max_iter=50, P=0.99, c=100, w=0.5, sample_moves=10, r=1.0):
+def fast_sa(chip, max_iter=50, P=0.99, c=100, w=Global_w, sample_moves=10, r=1.0):
     import copy, math, random
 
-    T1_scale_factor = 10.0
+    T1_scale_factor = 1.0
 
     # 초기 상태 백업
     orig_st = copy.deepcopy(chip)
@@ -681,11 +702,10 @@ def fast_sa(chip, max_iter=50, P=0.99, c=100, w=0.5, sample_moves=10, r=1.0):
         print(f"[Iter={n:3d}] BestLocalOpData={best_op_data}, BestLocalCost={best_local_cost:.3f}, "
               f"ReAppMsg={re_msg}, T={T:9.5f}, dE={dE:9.5f}, Prob={acc_prob:6.4f}, {acc_str}")
 
-        # (f) n%4000 == 0 시점 plot (사용자가 3/8에 5000번마다 plot이라 하였으나
-        #   본 예시에서는 너무 커서 40000등으로 조건만 변경해둠)
-        #if n % 10000 == 0:
-        #    best_chip.plot_b_tree(iteration=n)
-        #    plt.show()
+        # (f) n%10000 == 0 시점 plot
+        if n % 100 == 0:
+            best_chip.plot_b_tree(iteration=n)
+            plt.show()
 
     # ─────────────────────────────────────────────────────────────
     # 마무리: T vs Iter 플롯
@@ -847,8 +867,8 @@ if __name__=="__main__":
     # 초기 상태에서의 area, HPWL, penalty, cost 계산 (정규화된 값)
     w_, h_, area_ = calculate_total_area(chip.modules)
     hpwl_ = calculate_hpwl(chip.modules)
-    init_cost = calc_combined_cost(chip.modules, w=0.66, chip=chip, r=1.0)
-    area_norm, hpwl_norm, penalty_norm = get_normalized_values(chip.modules, chip=chip, w=0.66, r=1.0)
+    init_cost = calc_combined_cost(chip.modules, w=Global_w, chip=chip, r=1.0)
+    area_norm, hpwl_norm, penalty_norm = get_normalized_values(chip.modules, chip=chip, w=Global_w, r=1.0)
 
     print("=== 초기 Chip (Left-Chain) ===")
     print(f"BoundingBox area (absolute)   = {area_}")
@@ -865,16 +885,16 @@ if __name__=="__main__":
             max_iter=150000,
             P=0.95,
             c=100,
-            w=0.66,
-            sample_moves=5,
+            w=Global_w,
+            sample_moves=20,
             r=1.0  # penalty 가중치
         )
 
         # 최종 상태에서의 area, HPWL, penalty, cost 계산 (정규화된 값)
         final_w, final_h, final_area = calculate_total_area(best_chip.modules)
         final_hpwl = calculate_hpwl(best_chip.modules)
-        final_cost = calc_combined_cost(best_chip.modules, w=0.5, chip=best_chip, r=1.0)
-        f_area_norm, f_hpwl_norm, f_penalty_norm = get_normalized_values(best_chip.modules, best_chip, w=0.5, r=1.0)
+        final_cost = calc_combined_cost(best_chip.modules, w=Global_w, chip=best_chip, r=1.0)
+        f_area_norm, f_hpwl_norm, f_penalty_norm = get_normalized_values(best_chip.modules, best_chip, w=Global_w, r=1.0)
 
         total_module_area = sum(m.area for m in best_chip.modules)
         if final_area>0:
