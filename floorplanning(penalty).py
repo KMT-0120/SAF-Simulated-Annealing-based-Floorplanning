@@ -284,7 +284,7 @@ class Chip:
             nd.module.y=0
             nd.module.order=None
         self._dfs_place_node(self.root,1,0,0)
-    """
+    
     def _dfs_place_node(self,node,order,x_offset,y_offset):
         if not node:
             return order
@@ -315,50 +315,7 @@ class Chip:
             ry_s=self.update_contour(rx_s,rx_e)
             order=self._dfs_place_node(node.right,order,rx_s,ry_s)
 
-        return order """
-
-    def _dfs_place_node(self, node, order, x_offset, y_offset):
-        if not node:
-            return order
-
-        # place this node
-        node.module.x = x_offset
-        node.module.y = y_offset
-        node.module.order = order
-
-        # update contour with this module's top edge
-        x1 = x_offset
-        x2 = x_offset + node.module.width
-        top_y = y_offset + node.module.height
-        self.insert_contour_segment(x1, x2, top_y)
-        self.max_width  = max(self.max_width, x2)
-        self.max_height = max(self.max_height, top_y)
-        order += 1
-
-        # left child: flush to the right of parent as before
-        if node.left:
-            lx = node.module.x + node.module.width
-            rx = lx + node.left.module.width
-            ly = self.update_contour(lx, rx)
-            order = self._dfs_place_node(node.left, order, lx, ly)
-
-        # right child: scan for the lowest & then leftmost fit above parent
-        if node.right:
-            child_w   = node.right.module.width
-            parent_top = y_offset + node.module.height
-            best = (float('inf'), None)  # (best_y, best_x)
-
-            for seg in self.contour_line:
-                cx = seg.x1
-                cy = max(parent_top, self.update_contour(cx, cx + child_w))
-                # choose lower cy, tie-break on smaller cx
-                if cy < best[0] or (cy == best[0] and cx < best[1]):
-                    best = (cy, cx)
-
-            ry, rx = best
-            order = self._dfs_place_node(node.right, order, rx, ry)
-
-        return order
+        return order 
 
     def update_contour(self,x1,x2):
         base_y=0
