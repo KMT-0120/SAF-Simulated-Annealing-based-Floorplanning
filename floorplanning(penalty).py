@@ -17,6 +17,8 @@
 #     penalty 계산식 윤서ver로 수정, Q-learning 사용
 #     x좌표 contour 적용중
 #     calc_combined_cost와 get_normalized_values를 통합 → calc_combined_cost(…, return_details=True)
+#     dfs_place_node 함수 수정(오른쪽 자식 배치 더 붙을 수 있도록)
+
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -80,7 +82,9 @@ class Chip:
         """
         self.modules = [m for m in modules if m.type != 'PARENT']
 
-        self.bound = next((m for m in modules if m.type == 'PARENT'), None)
+        self.bound = None #paprent 무시할경우
+        #self.bount = next((m for m in modules if m.type == 'PARENT'), None) #ami시리즈 아닐경우에는 NONE으로 고정
+
         if not self.bound:
             total_area = sum(m.area for m in self.modules)
             side = math.sqrt(total_area)
@@ -280,7 +284,7 @@ class Chip:
             nd.module.y=0
             nd.module.order=None
         self._dfs_place_node(self.root,1,0,0)
-
+    """
     def _dfs_place_node(self,node,order,x_offset,y_offset):
         if not node:
             return order
@@ -310,6 +314,49 @@ class Chip:
             rx_e=rx_s+node.right.module.width
             ry_s=self.update_contour(rx_s,rx_e)
             order=self._dfs_place_node(node.right,order,rx_s,ry_s)
+
+        return order """
+
+    def _dfs_place_node(self, node, order, x_offset, y_offset):
+        if not node:
+            return order
+
+        # place this node
+        node.module.x = x_offset
+        node.module.y = y_offset
+        node.module.order = order
+
+        # update contour with this module's top edge
+        x1 = x_offset
+        x2 = x_offset + node.module.width
+        top_y = y_offset + node.module.height
+        self.insert_contour_segment(x1, x2, top_y)
+        self.max_width  = max(self.max_width, x2)
+        self.max_height = max(self.max_height, top_y)
+        order += 1
+
+        # left child: flush to the right of parent as before
+        if node.left:
+            lx = node.module.x + node.module.width
+            rx = lx + node.left.module.width
+            ly = self.update_contour(lx, rx)
+            order = self._dfs_place_node(node.left, order, lx, ly)
+
+        # right child: scan for the lowest & then leftmost fit above parent
+        if node.right:
+            child_w   = node.right.module.width
+            parent_top = y_offset + node.module.height
+            best = (float('inf'), None)  # (best_y, best_x)
+
+            for seg in self.contour_line:
+                cx = seg.x1
+                cy = max(parent_top, self.update_contour(cx, cx + child_w))
+                # choose lower cy, tie-break on smaller cx
+                if cy < best[0] or (cy == best[0] and cx < best[1]):
+                    best = (cy, cx)
+
+            ry, rx = best
+            order = self._dfs_place_node(node.right, order, rx, ry)
 
         return order
 
@@ -602,7 +649,7 @@ def fast_sa(chip,max_iter=5000,P=0.99,c=20,w=Global_w,sample_moves=10,r=1.0):
 
         if n==1:
             T=T1
-        elif 2<=n<=3000:
+        elif 2<=n<=300:
             T=max((T1*delta_cost)/(n*c),1e-6)
         else:
             T=max((T1*delta_cost)/n,1e-6)
@@ -641,11 +688,11 @@ def fast_sa(chip,max_iter=5000,P=0.99,c=20,w=Global_w,sample_moves=10,r=1.0):
         print(f"[Iter={n:3d}] BestLocalCost={best_local_cost:.3f}, ReAppMsg={re_msg}")
         print(f"T={T:9.5f}, dE={dE:9.5f}, Prob={acc_prob:6.4f}, {acc_str}")
 
-        if n%5000==0:
-            best_chip.plot_b_tree(iteration=n)
-            plt.show()
+        #if n%2000==0:
+        #    best_chip.plot_b_tree(iteration=n)
+        #    plt.show()
 
-    plt.figure()
+    plt.figure() 
     plt.plot(range(1,max_iter+1),temps)
     plt.xlabel("Iteration")
     plt.ylabel("Temperature")
@@ -771,11 +818,12 @@ def parse_gsrc_nets(nets_file,modules):
 # 5. 메인 실행
 # ─────────────────────────────────────────────────────────────
 if __name__=="__main__":
+    #blocks_file="./example/ami49.yal"
+    #modules=parse_yal(blocks_file)
     blocks_file="./example/n300.blocks"
     nets_file  ="./example/n300.nets"
     modules=parse_gsrc_blocks(blocks_file)
     modules=parse_gsrc_nets(nets_file,modules)
-
     chip=Chip(modules)
     chip.calculate_coordinates()
     chip.plot_b_tree()
@@ -794,11 +842,11 @@ if __name__=="__main__":
     ans=input("FastSA(Q-Learning)로 최적화를 진행?(y/n): ")
     if ans.lower().startswith('y'):
         best_chip=fast_sa(chip,
-                          max_iter=150000,
+                          max_iter=50000,
                           P=0.95,
                           c=100,
                           w=Global_w,
-                          sample_moves=20,
+                          sample_moves=40,
                           r=1.0)
 
         final_cost, faN, fhN, fpN = calc_combined_cost(best_chip.modules, w=Global_w, chip=best_chip, r=1.0, return_all=True)
