@@ -701,6 +701,23 @@ def fast_sa(chip,max_iter=5000,P=0.99,c=20,w=Global_w,sample_moves=10,r=1.0):
 
     return best_chip
 
+def partial_sa_for_initial(chip, pre_iter=500):
+    """
+    부분적으로 짧은 SA를 먼저 돌려서,
+    완전 무작위 초기 해보다는 어느 정도 정돈된 상태를 얻기 위한 함수.
+    """
+    print("\n[Info] --- Running partial SA for initial layout ---\n")
+    improved_chip = fast_sa(
+        chip,
+        max_iter=pre_iter,
+        c=100,
+        w=Global_w,
+        sample_moves=30,
+        r=1.0
+    )
+    print("[Info] --- Partial SA ended. Using improved initial layout ---\n")
+    return improved_chip
+
 # ─────────────────────────────────────────────────────────────
 # 4. 파일 파싱(Yal, GSRC)
 # ─────────────────────────────────────────────────────────────
@@ -824,6 +841,8 @@ if __name__=="__main__":
     nets_file  ="./example/n300.nets"
     modules=parse_gsrc_blocks(blocks_file)
     modules=parse_gsrc_nets(nets_file,modules)
+
+    # [A] 초기 Chip 생성 -> 완전 무작위(랜덤) 배치
     chip=Chip(modules)
     chip.calculate_coordinates()
     chip.plot_b_tree()
@@ -839,10 +858,17 @@ if __name__=="__main__":
     print(f"Penalty_norm                 = {pN:.3f}")
     print(f"Initial cost (with penalty)  = {init_cost:.3f}")
 
+    # [B] 부분적 SA(짧은 SA) -> 초기 배치 개선
+    chip = partial_sa_for_initial(chip, pre_iter=500)  # 원하는 만큼 iteration 조정
+    chip.plot_b_tree()
+    plt.show()
+    
+
+    # [C] 메인 SA 실행 여부
     ans=input("FastSA(Q-Learning)로 최적화를 진행?(y/n): ")
     if ans.lower().startswith('y'):
         best_chip=fast_sa(chip,
-                          max_iter=50000,
+                          max_iter=8000,
                           P=0.95,
                           c=100,
                           w=Global_w,
