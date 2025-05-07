@@ -1041,7 +1041,7 @@ if __name__=="__main__":
     # [B] 부분적 SA(짧은 SA)를 통한 초기 배치 개선 (선택적)
     use_partial_sa = input("Run partial SA for initial layout improvement? (y/n): ")
     if use_partial_sa.lower().startswith('y'):
-        chip = partial_sa_for_initial(chip, pre_iter=1000) # 반복 횟수 조정 가능 (예: 500~2000)
+        chip = partial_sa_for_initial(chip, pre_iter=500) # 반복 횟수 조정 가능 (예: 500~2000)
         print("Plotting layout after partial SA...")
         chip.plot_b_tree(iteration="After_Partial_SA")
         plt.show()
@@ -1063,12 +1063,12 @@ if __name__=="__main__":
     ans=input("Proceed with Full FastSA (Q-Learning) optimization? (y/n): ")
     if ans.lower().startswith('y'):
         best_chip=fast_sa(chip, # 이전 단계의 chip 객체를 사용
-                          max_iter=10000,    # 반복 횟수 (예: 5000 ~ 20000)
+                          max_iter=8000,    # 반복 횟수 (예: 5000 ~ 20000)
                           P=0.95,            # 초기 수용 확률
-                          c=80,             # 냉각 스케줄 상수 (조정 필요)
+                          c=100,             # 냉각 스케줄 상수 (조정 필요)
                           w=Global_w,        # Area vs HPWL 가중치
-                          sample_moves=25,   # 각 온도 스텝에서 시도할 이동 수
-                          r=1.0)             # Penalty 가중치
+                          sample_moves=20,   # 각 온도 스텝에서 시도할 이동 수
+                          r=20.0)             # Penalty 가중치
 
         # 최종 결과 비용 계산 및 출력
         final_cost, faN, fhN, fpN = calc_combined_cost(best_chip.modules, w=Global_w, chip=best_chip, r=1.0, return_all=True)
