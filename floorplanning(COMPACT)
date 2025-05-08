@@ -1,0 +1,1226 @@
+#해당 주석 문단은 지우지말것(특히 GPT 사용시, 지워지는지 또한 확인한 후 다시 추가), 
+# GPT요구사항(해당 줄 이외의 주석내용은 GPT 요구사항아니므로 반영하지말것)GPT가 임의로 코드 전체 골격 함수 이름, 변수명 변경하지 말것, 변경하였을경우 자세한 이유와 변경사항 명시할것것
+
+#3/8 iter 5000번마다 plot, SA종료 후 T 변화 추이 그래프 plot 추가
+# 사용하지 않는 과거 코드 삭제(adjust_for_overlaps, check_overlap, is_within_bounds)
+# plot관련해서 노드 크기/폰트 크기 조정, 노드 간격 조정
+# c factor 조정
+#3/9 GSRC 적용, 초기해 leftchain -> random으로 변경
+#3/15 왼쪽 자식의 배치가 부모노드와 너무 조금 떨어져있던 버그 수정
+#3/18 cost에 penalty추가, 정규화는 area_norm와 너무 크게 차이나는것을 확인(가령 HPWL_norm=4, area_norm=2000)해서 area_norm * 500
+#     초기, 마지막 비용값을 더 잘 확인하기 위해 get_nomalized_values()함수 → calc_combined_cost에 return_details 인자 추가
+#     default_parent를 1000, 1000 대신 전체 module의 넓이*1.2로 설정
+#     sample_moves가 버려지는 경우를 대비해 sample_moves 전부를 기억해두고 제일 좋았던 코스트 변화량을 적용
+#     left-chain 적용
+#3/26 penalty 함수 개선(area_violation, length_violation)
+#     cost_scale 100 -> 10, T1_scale_factor 10 -> 1, w 사용빈도가 높아 Global_w로 관리
+#     penalty 계산식 윤서ver로 수정, Q-learning 사용
+#     x좌표 contour 적용중
+#     calc_combined_cost와 get_normalized_values를 통합 → calc_combined_cost(…, return_details=True)
+
+
+import matplotlib.pyplot as plt
+import networkx as nx
+import copy
+import math
+import random
+import re
+import sys
+sys.setrecursionlimit(10000)
+
+global Global_w
+Global_w=0.66
+
+class Module:
+    def __init__(self, name: str, width: float, height: float, module_type: str, net=None):
+        self.name = name
+        self.width = width
+        self.height = height
+        self.area = width * height
+        self.x = 0
+        self.y = 0
+        self.type = module_type
+        self.net = net if net is not None else []
+        self.order = None
+
+    def rotate(self):
+        """너비와 높이를 교환"""
+        self.width, self.height = self.height, self.width
+
+    def set_position(self, x: float, y: float, order: int):
+        self.x = x
+        self.y = y
+        self.order = order
+
+    def __str__(self):
+        formatted_net = "\n    ".join(self.net)
+        return (f"Module(Name={self.name}, "
+                f"Width={self.width:.2f}, Height={self.height:.2f}, "
+                f"Area={self.area:.2f}, Position=({self.x:.2f}, {self.y:.2f}), "
+                f"Order={self.order}, Type={self.type}, Net=\n    {formatted_net})")
+
+class BTreeNode:
+    def __init__(self, module, parent=None):
+        self.module = module
+        self.left = None
+        self.right = None
+        self.parent = parent
+
+class ContourNode:
+    """Contour segment: [x1, x2) 구간에서 y2 높이"""
+    def __init__(self, x1, x2, y2):
+        self.x1 = x1
+        self.x2 = x2
+        self.y2 = y2
+
+class Chip:
+    def __init__(self, modules):
+        """
+        parent가 없는 경우에는 전체 module들의 area합 * 1.2와 동일한
+        정사각형을 DefaultParent로 설정합니다.
+        """
+        self.modules = [m for m in modules if m.type != 'PARENT']
+
+        self.bound = None #paprent 무시할경우
+        #self.bount = next((m for m in modules if m.type == 'PARENT'), None) #ami시리즈 아닐경우에는 NONE으로 고정
+
+        if not self.bound:
+            total_area = sum(m.area for m in self.modules)
+            side = math.sqrt(total_area*1.2) # Default parent의 한 변 길이를 전체 모듈 넓이 합의 제곱근으로 설정
+            self.bound = Module(
+                name='DefaultParent',
+                width=side, # 
+                height=side, # 
+                module_type='PARENT'
+            )
+
+        self.build_b_tree()
+        self.contour_line = [] # Initialize contour_line here
+        self.max_width = 0
+        self.max_height = 0
+
+
+    def build_b_tree(self):
+        if not self.modules:
+            self.root = None
+            return
+
+        random_mods = self.modules[:]
+        random.shuffle(random_mods)
+
+        self.root = BTreeNode(random_mods[0], parent=None)
+        for mod in random_mods[1:]:
+            node = BTreeNode(mod)
+            cands = self.find_possible_parents()
+            chosen = random.choice(cands)
+            self.attach_node(chosen, node)
+
+    def collect_all_nodes(self):
+        if not self.root:
+            return []
+        result=[]
+        queue=[self.root]
+        while queue:
+            cur=queue.pop(0)
+            result.append(cur)
+            if cur.left:
+                queue.append(cur.left)
+            if cur.right:
+                queue.append(cur.right)
+        return result
+
+    def rotate_node(self,node):
+        node.module.rotate()
+
+    def move_node(self,node):
+        if node.parent is None: # 루트 노드는 이동 불가
+            return f"[Op2: Move] Cannot move ROOT node ({node.module.name})."
+        self.remove_node_from_parent(node)
+        cands = self.find_possible_parents()
+        if not cands: # 재삽입할 위치가 없는 경우 (이론적으로는 발생하기 어려움)
+             # 만약을 위해 원래대로 복구 시도 (실제로는 더 복잡한 복구 로직 필요)
+            # self.attach_node(original_parent, node) # 이 부분은 실제 구현 시 original_parent와 side를 저장해야 함
+            return "[Op2: Move] No available spot to re-insert node."
+        new_par = random.choice(cands)
+        side = self.attach_node(new_par,node)
+        return f"[Op2: Move] Moved {node.module.name} under {new_par.module.name} ({side})"
+
+    def remove_node_from_parent(self,node):
+        p=node.parent
+        if p is None: # 이미 부모가 없는 경우 (루트 노드 등)
+            return
+        if p.left==node:
+            p.left=None
+        elif p.right==node:
+            p.right=None
+        node.parent=None # 노드의 부모 참조도 제거
+
+    def find_possible_parents(self):
+        all_nd=self.collect_all_nodes()
+        results=[]
+        for nd in all_nd:
+            if nd.left is None or nd.right is None: # 왼쪽 또는 오른쪽 자식이 없는 노드
+                results.append(nd)
+        return results
+
+    def attach_node(self,parent,node):
+        node.parent=parent # 새 부모 설정
+        slots=[]
+        if not parent.left:
+            slots.append("left")
+        if not parent.right:
+            slots.append("right")
+        if not slots: # 양쪽 자식이 모두 있는 경우 (이론적으로 find_possible_parents에서 걸러짐)
+            return "NoSlot" # 오류 또는 예외 상황 처리 필요
+        chosen=random.choice(slots)
+        if chosen=="left":
+            parent.left=node
+        else:
+            parent.right=node
+        return chosen # 어느 쪽에 붙였는지 반환 ("left" or "right")
+
+    def swap_nodes(self,nodeA,nodeB):
+        # 단순히 모듈 객체만 교환
+        nodeA.module,nodeB.module = nodeB.module,nodeA.module
+
+    def apply_specific_operation(self, op, all_nodes=None):
+        """
+        Q-learning등에서 rotate/move/swap이 결정된 뒤 실제 수행
+        """
+        if not all_nodes:
+            all_nodes = self.collect_all_nodes()
+        if not all_nodes:
+            # print("[Warn] No nodes in the tree.") # 사용자 요청에 따라 주석 처리 또는 삭제 가능
+            return ("NoNode",None,None) # (메시지, 연산종류, 연산데이터)
+
+        if op=="rotate":
+            chosen=random.choice(all_nodes)
+            self.rotate_node(chosen)
+            msg=f"[Op1: Rotate] Rotated {chosen.module.name}"
+            op_data={'op':'rotate','nodeA_name':chosen.module.name}
+        elif op=="move":
+            chosen=random.choice(all_nodes)
+            msg=self.move_node(chosen) # move_node는 이미 메시지를 반환
+            op_data={'op':'move','nodeA_name':chosen.module.name}
+        elif op=="swap":
+            if len(all_nodes)<2:
+                msg="[Op3: Swap] Not enough nodes to swap."
+                op_data={'op':'swap','nodeA_name':None,'nodeB_name':None} # 스왑 실패 시
+            else:
+                nodeA,nodeB=random.sample(all_nodes,2)
+                self.swap_nodes(nodeA,nodeB)
+                msg=f"[Op3: Swap] Swapped {nodeA.module.name} <-> {nodeB.module.name}"
+                op_data={'op':'swap','nodeA_name':nodeA.module.name,'nodeB_name':nodeB.module.name}
+        else:
+            msg="[InvalidOp]"
+            op_data={'op':None} # 유효하지 않은 연산
+        # print(msg) # <<< 이 부분을 주석 처리 또는 삭제합니다.
+
+        # 연산 후 좌표 재계산
+        for nd in all_nodes: # 좌표 초기화
+            nd.module.x=0
+            nd.module.y=0
+            nd.module.order=None
+        self.calculate_coordinates()
+        return (msg,op,op_data) # (수행결과메시지, 실제수행된연산, 연산데이터)
+
+    def reapply_operation(self, op_data):
+        """
+        SA에서 이전 상태로 복원하기 위해 연산을 "되돌리는" 것이 아니라,
+        저장된 op_data를 기반으로 연산을 "다시 적용"하는 방식.
+        실제로는 SA에서 상태 복원은 deepcopy를 사용하므로, 이 함수는
+        특정 연산을 재현하거나 디버깅할 때 유용할 수 있음.
+        SA의 accept/reject 로직에서는 주로 chip 객체의 deepcopy를 사용.
+        여기서는 op_data를 받아 해당 연산을 다시 수행하는 것으로 이해하고 작성.
+        """
+        if not op_data:
+            return ("[NoOpData]", "NoOp")
+
+        all_nd=self.collect_all_nodes()
+        def find_node_by_name(nm):
+            for nd in all_nd:
+                if nd.module.name==nm:
+                    return nd
+            return None
+
+        op_type=op_data.get('op','NoOp')
+        if op_type=='rotate':
+            nA=op_data.get('nodeA_name')
+            ndA=find_node_by_name(nA)
+            if ndA is None:
+                return("[Rotate] Node not found",op_type)
+            self.rotate_node(ndA) # 회전은 다시 수행해도 동일
+            msg=f"[Op1: Rotate] Re-applied rotate on {nA}"
+        elif op_type=='move':
+            # Move 연산은 되돌리기가 복잡함.
+            # 여기서는 단순히 op_data에 명시된 노드를 다시 move 시도하는 것으로 가정.
+            # SA에서는 상태 복원을 위해 deepcopy된 이전 chip 객체를 사용해야 함.
+            # 이 함수가 SA의 상태 복원용이라면, 이 로직은 부적합.
+            # 여기서는 op_data에 있는 노드를 다시 move하는 것으로 해석.
+            nA=op_data.get('nodeA_name')
+            ndA=find_node_by_name(nA)
+            if ndA is None:
+                return("[Move] Node not found",op_type)
+            msg=self.move_node(ndA) # move_node는 메시지 반환
+            msg+=" [Re-applied]"
+        elif op_type=='swap':
+            nA=op_data.get('nodeA_name')
+            nB=op_data.get('nodeB_name')
+            ndA=find_node_by_name(nA)
+            ndB=find_node_by_name(nB)
+            if (not ndA) or (not ndB):
+                return("[Swap] Node(s) not found",op_type)
+            self.swap_nodes(ndA,ndB) # 스왑은 다시 수행해도 동일
+            msg=f"[Op3: Swap] Re-applied swap: {nA} <-> {nB}"
+        else:
+            msg="[NoOp or invalid op]"
+            op_type="NoOp"
+
+        # 연산 후 좌표 재계산
+        for nd in all_nd: # 좌표 초기화
+            nd.module.x=0
+            nd.module.y=0
+            nd.module.order=None
+        self.calculate_coordinates()
+        return(msg,op_type) # (재적용결과메시지, 재적용된연산종류)
+
+    def randomize_b_tree(self,w):
+        """B*-Tree 구조를 랜덤하게 재구성하고 비용을 반환"""
+        random.shuffle(self.modules) # 모듈 순서 섞기
+        self.build_b_tree() # B*-Tree 재구성
+        self.calculate_coordinates() # 좌표 계산
+        return calc_combined_cost(self.modules,w,chip=self) # 비용 계산
+
+    def calculate_coordinates(self):
+        if not self.root:
+            return
+        self.contour_line=[] # 컨투어 라인 초기화
+        self.max_width=0
+        self.max_height=0
+        all_nd=self.collect_all_nodes() # 모든 노드 좌표 초기화
+        for nd in all_nd:
+            nd.module.x=0
+            nd.module.y=0
+            nd.module.order=None
+        self._dfs_place_node(self.root,1,0,0) # 루트부터 DFS로 배치 시작
+    
+    def _dfs_place_node(self,node,order,x_offset,y_offset):
+        if not node:
+            return order
+
+        # 현재 노드 위치 설정
+        node.module.x=x_offset
+        node.module.y=y_offset
+        node.module.order=order # 배치 순서 기록
+
+        # 현재 노드가 차지하는 x_range와 top_y
+        x1=x_offset
+        x2=x_offset+node.module.width
+        top_y=y_offset+node.module.height
+
+        # 컨투어 라인 업데이트 및 최대 너비/높이 갱신
+        self.insert_contour_segment(x1,x2,top_y)
+        if x2>self.max_width:
+            self.max_width=x2
+        if top_y>self.max_height:
+            self.max_height=top_y
+        order+=1
+
+        # 왼쪽 자식 배치 (부모의 오른쪽에 배치)
+        if node.left:
+            lx=node.module.x+node.module.width # 왼쪽 자식의 x 시작점은 부모의 x + 부모 너비
+            rx=lx+node.left.module.width # 왼쪽 자식의 x 끝점
+            ly=self.update_contour(lx,rx) # 해당 x구간에서 가능한 y좌표
+            order=self._dfs_place_node(node.left,order,lx,ly)
+        
+        # 오른쪽 자식 배치 (부모의 아래쪽에 배치)
+        if node.right:
+            rx_s=node.module.x # 오른쪽 자식의 x 시작점은 부모의 x와 동일
+            rx_e=rx_s+node.right.module.width # 오른쪽 자식의 x 끝점
+            ry_s=self.update_contour(rx_s,rx_e) # 해당 x구간에서 가능한 y좌표
+            order=self._dfs_place_node(node.right,order,rx_s,ry_s)
+
+        return order 
+
+    def update_contour(self,x1,x2):
+        """주어진 x_range [x1, x2)에 대해 배치될 수 있는 가장 낮은 y값 찾기"""
+        base_y=0
+        for seg in self.contour_line:
+            # 겹치는 구간이 있는 경우
+            if not(seg.x2<=x1 or seg.x1>=x2):
+                base_y=max(base_y,seg.y2)
+        return base_y
+
+    def insert_contour_segment(self,x1,x2,new_top):
+        """새로운 모듈 배치 후 컨투어 라인 업데이트"""
+        updated=[]
+        i=0
+        while i<len(self.contour_line):
+            seg=self.contour_line[i]
+            # 새 세그먼트와 겹치지 않는 경우
+            if seg.x2<=x1 or seg.x1>=x2:
+                updated.append(seg)
+            else: # 겹치는 경우
+                # 기존 세그먼트가 새 세그먼트를 포함하는 경우 (양쪽으로 쪼개짐)
+                if seg.x1<x1 and seg.x2>x2:
+                    updated.append(ContourNode(seg.x1,x1,seg.y2))
+                    updated.append(ContourNode(x2,seg.x2,seg.y2))
+                # 기존 세그먼트의 왼쪽 부분만 남는 경우
+                elif seg.x1<x1 and seg.x2<=x2:
+                    updated.append(ContourNode(seg.x1,x1,seg.y2))
+                # 기존 세그먼트의 오른쪽 부분만 남는 경우
+                elif seg.x1>=x1 and seg.x2>x2:
+                    updated.append(ContourNode(x2,seg.x2,seg.y2))
+                # 그 외 (새 세그먼트가 기존 세그먼트를 완전히 덮는 등)는 기존 세그먼트 삭제
+            i+=1
+        updated.append(ContourNode(x1,x2,new_top)) # 새 세그먼트 추가
+        updated.sort(key=lambda s:s.x1) # x1 기준으로 정렬
+        self.contour_line=updated
+
+    def _check_rect_overlap(self, r1_x, r1_y, r1_w, r1_h, r2_x, r2_y, r2_w, r2_h):
+        """두 사각형이 겹치는지 확인하는 헬퍼 함수. 경계가 닿는 것은 겹치지 않는 것으로 간주."""
+        # Check if two rectangles overlap
+        # r1_left < r2_right AND r1_right > r2_left AND r1_bottom < r2_top AND r1_top > r2_bottom
+        # Add small epsilon to avoid floating point issues if needed, but strict inequality should work
+        epsilon = 1e-9 
+        if (r1_x < r2_x + r2_w - epsilon and
+            r1_x + r1_w > r2_x + epsilon and
+            r1_y < r2_y + r2_h - epsilon and
+            r1_y + r1_h > r2_y + epsilon):
+            return True
+        return False
+
+    def compact_floorplan_final(self):
+        """최종 greedy compaction (왼쪽 -> 아래쪽). 겹침 방지 로직 개선."""
+        print("\n[Info] --- Performing final greedy compaction (Left -> Bottom) ---")
+        if not self.modules:
+            return
+
+        # Create a copy of modules list to preserve original order if needed elsewhere
+        # We will modify the x, y coordinates of the modules in self.modules directly
+        modules_to_compact = self.modules[:]
+
+        # --- 1. 왼쪽으로 밀착 (Left Compaction) ---
+        # Sort modules primarily by x, then y to process left-to-right, bottom-to-top
+        # This order helps when pushing things left.
+        modules_to_compact.sort(key=lambda m: (m.x, m.y)) 
+        
+        placed_indices_left = set() # Keep track of modules whose final left-compacted position is set
+
+        for i in range(len(modules_to_compact)):
+            module_i = modules_to_compact[i]
+            target_x = 0.0 
+            
+            # Compare module_i with all previously placed modules (j < i)
+            for j in range(i):
+                module_j = modules_to_compact[j]
+                
+                # Check if their y-intervals overlap
+                y_intervals_overlap = (module_i.y < module_j.y + module_j.height and
+                                       module_i.y + module_i.height > module_j.y)
+
+                if y_intervals_overlap:
+                    # If y-intervals overlap, module_i must be placed to the right of module_j
+                    # target_x should be at least module_j.x + module_j.width
+                    target_x = max(target_x, module_j.x + module_j.width)
+            
+            # Set the final x-coordinate for module_i
+            module_i.x = target_x
+            # placed_indices_left.add(i) # Mark as placed in this phase (might not be needed with direct modification)
+
+        # --- 2. 아래쪽으로 밀착 (Bottom Compaction) ---
+        # Sort modules primarily by y, then x using the *newly compacted* x values
+        # This processes bottom-to-top, left-to-right.
+        modules_to_compact.sort(key=lambda m: (m.y, m.x)) 
+
+        for i in range(len(modules_to_compact)):
+            module_i = modules_to_compact[i]
+            target_y = 0.0
+
+            # Compare module_i with all previously placed modules (j < i)
+            for j in range(i):
+                module_j = modules_to_compact[j]
+
+                # Check if their x-intervals overlap (using compacted x values)
+                x_intervals_overlap = (module_i.x < module_j.x + module_j.width and
+                                       module_i.x + module_i.width > module_j.x)
+
+                if x_intervals_overlap:
+                    # If x-intervals overlap, module_i must be placed above module_j
+                    # target_y should be at least module_j.y + module_j.height
+                    target_y = max(target_y, module_j.y + module_j.height)
+            
+            # Set the final y-coordinate for module_i
+            module_i.y = target_y
+
+        # 칩 전체 너비와 높이 업데이트
+        if self.modules: # Use self.modules as coordinates were updated directly
+            self.max_width = max(m.x + m.width for m in self.modules) if self.modules else 0.0
+            self.max_height = max(m.y + m.height for m in self.modules) if self.modules else 0.0
+        else:
+            self.max_width = 0.0
+            self.max_height = 0.0
+        
+        print("[Info] --- Final greedy compaction finished ---")
+
+
+    def plot_b_tree(self, iteration=None):
+        fig,(ax1,ax2)=plt.subplots(1,2,figsize=(24,12)) # Plot 크기 조정
+
+        # 물리적 배치 플롯 (ax1)
+        # Compaction 후에는 B-Tree 순회(_plot_node) 대신 self.modules 직접 순회하여 그려야 정확
+        if iteration and "Compacted" in iteration: # Compaction 후의 플롯인 경우
+            for m in self.modules:
+                rect=plt.Rectangle((m.x,m.y),m.width,m.height,
+                                   edgecolor='green',facecolor='lightgreen',fill=True,lw=1)
+                ax1.add_patch(rect)
+                ax1.text(m.x+m.width/2,m.y+m.height/2,
+                         f'{m.name}\n(C)',ha='center',va='center',fontsize=7) # (C) for Compacted
+        else: # B-Tree 기반 플롯 (SA 과정 등)
+            # Check if root exists before plotting based on tree traversal
+            if self.root:
+                self._plot_node(self.root,ax1) # 모듈 그리기 (B-Tree 순회)
+            else: # If no root (e.g., after compaction potentially), plot from self.modules
+                for m in self.modules:
+                     rect=plt.Rectangle((m.x,m.y),m.width,m.height,
+                                   edgecolor='blue',facecolor='lightblue',fill=True,lw=1) 
+                     ax1.add_patch(rect)
+                     ax1.text(m.x+m.width/2,m.y+m.height/2,
+                            f'{m.name}\n#{m.order if m.order is not None else "N/A"}',ha='center',va='center',fontsize=7) 
+
+        
+        # 경계 상자 그리기 (DefaultParent 또는 PARENT 모듈 기준)
+        if self.bound:
+            bound_rect=plt.Rectangle((0,0),self.bound.width,self.bound.height,
+                                    edgecolor='red',facecolor='none',lw=2, label='Chip Boundary')
+            ax1.add_patch(bound_rect)
+        ax1.legend()
+
+
+        if iteration is not None:
+            ax1.set_title(f"Physical Placement (Iter={iteration})") 
+        else:
+            ax1.set_title("Physical Placement")
+        ax1.set_xlabel("X-coordinate")
+        ax1.set_ylabel("Y-coordinate")
+        
+        plot_max_w = max(self.max_width, self.bound.width if self.bound else 0)
+        plot_max_h = max(self.max_height, self.bound.height if self.bound else 0)
+        # 모든 모듈이 (0,0) 이상에 배치되도록 xlim, ylim 조정
+        # Calculate min x and y from modules for accurate plot limits
+        min_x_coord = min(m.x for m in self.modules) if self.modules else 0
+        min_y_coord = min(m.y for m in self.modules) if self.modules else 0
+        
+        ax1.set_xlim(min(0, min_x_coord) - 50, plot_max_w + 200)
+        ax1.set_ylim(min(0, min_y_coord) - 50, plot_max_h + 200)
+        ax1.set_aspect('equal', adjustable='box') 
+
+        # B*-Tree 구조 플롯 (ax2)
+        if self.root : 
+            G=nx.DiGraph()
+            pos={} 
+            self.add_edges(self.root,None,0,0,G,pos) 
+
+            nx.draw(G, pos, ax=ax2, with_labels=True, node_color="lightblue",
+                    edge_color="black", node_size=1500, font_size=8,  
+                    arrows=True, arrowstyle='->', arrowsize=10)
+            if iteration is not None and "Compacted" not in iteration: # Compaction 후에는 이 트리가 실제 배치를 반영하지 않을 수 있음
+                ax2.set_title(f"B*-Tree Structure (SA Result, Iter={iteration})")
+            elif iteration is None:
+                 ax2.set_title("B*-Tree Structure (SA Result)")
+            else:
+                ax2.set_title("B*-Tree Structure (Note: May not reflect compacted placement)")
+        else:
+            ax2.set_title("B*-Tree Structure (No tree to display)")
+
+
+        plt.tight_layout() 
+
+
+    def _plot_node(self,node,ax):
+        if not node:
+            return
+        m=node.module
+        rect=plt.Rectangle((m.x,m.y),m.width,m.height,
+                           edgecolor='blue',facecolor='lightblue',fill=True,lw=1) 
+        ax.add_patch(rect)
+        ax.text(m.x+m.width/2,m.y+m.height/2,
+                f'{m.name}\n#{m.order if m.order is not None else "N/A"}',ha='center',va='center',fontsize=7) 
+        self._plot_node(node.left,ax)
+        self._plot_node(node.right,ax)
+
+    def add_edges(self,node,parent_name,depth,x_pos,G,pos):
+        """
+        트리 구조를 시각화하기 위해 NetworkX 그래프에 노드와 엣지를 추가하고,
+        계층적으로 노드 위치(pos)를 계산합니다.
+        x_pos는 현재 서브트리가 그려질 x축 시작 위치를 나타냅니다.
+        반환값은 현재 서브트리 이후에 다음 서브트리가 그려질 x축 시작 위치입니다.
+        """
+        if not node:
+            return x_pos 
+
+        node_name=node.module.name
+        
+        current_x_start = x_pos
+        if node.left:
+            current_x_start = self.add_edges(node.left, node_name, depth + 1, x_pos, G, pos)
+        
+        pos[node_name] = (current_x_start, -depth * 2) 
+        G.add_node(node_name,label=node.module.name)
+        if parent_name:
+            G.add_edge(parent_name,node_name)
+
+        next_x_pos = current_x_start + 1 
+
+        if node.right:
+            next_x_pos = self.add_edges(node.right, node_name, depth + 1, next_x_pos, G, pos)
+            return next_x_pos 
+        
+        return next_x_pos 
+
+
+# ─────────────────────────────────────────────────────────────
+# HPWL, 면적, penalty 함수들
+# ─────────────────────────────────────────────────────────────
+
+def calculate_hpwl(modules):
+    net_dict={} 
+    for m in modules:
+        for net_name in m.net:
+            if net_name not in net_dict:
+                net_dict[net_name]=[]
+            net_dict[net_name].append(m) 
+    if not net_dict: 
+        return 0
+    total_hpwl=0
+    for net,mods in net_dict.items():
+        if not mods: continue 
+        min_x=min(mm.x for mm in mods)
+        max_x=max(mm.x+mm.width for mm in mods)
+        min_y=min(mm.y for mm in mods)
+        max_y=max(mm.y+mm.height for mm in mods)
+        net_hpwl=(max_x - min_x)+(max_y - min_y)
+        total_hpwl+=net_hpwl
+    return total_hpwl
+
+def calculate_total_area(modules):
+    if not modules:
+        return (0,0,0) 
+    
+    min_x=min(m.x for m in modules) if modules else 0
+    max_x=max(m.x+m.width for m in modules) if modules else 0
+    min_y=min(m.y for m in modules) if modules else 0
+    max_y=max(m.y+m.height for m in modules) if modules else 0
+    width=(max_x - min_x)
+    height=(max_y - min_y)
+    return (width,height,(width*height))
+
+def calc_combined_cost(modules, w=Global_w, chip=None, r=1.0, return_all=False):
+    """
+    return_all=False => float( cost )
+    return_all=True  => ( cost, area_norm, hpwl_norm, penalty_norm ) 튜플
+    """
+    cost_scale=0.001 
+    if not modules:
+        if return_all:
+            return (0.0, 0.0, 0.0, 0.0)
+        else:
+            return 0.0
+
+    
+    base_scale=sum(m.area for m in modules) 
+    if base_scale<1e-12: 
+        base_scale=1.0
+    
+    net_area_sum=sum(m.area for m in modules if m.net)
+    if net_area_sum<1e-12:
+        net_area_sum=base_scale 
+
+    w_,h_,area_bb=calculate_total_area(modules) 
+    hpwl=calculate_hpwl(modules)
+
+    
+    if chip and chip.bound: 
+        bound_w = chip.bound.width
+        bound_h = chip.bound.height
+        
+        w_bb, h_bb = w_, h_
+
+        
+        area_violation = 0.0
+        if w_bb > bound_w and h_bb > bound_h: 
+            area_violation = (w_bb * h_bb) - (bound_w * bound_h)
+        elif w_bb > bound_w: 
+            area_violation = (w_bb - bound_w) * h_bb 
+        elif h_bb > bound_h: 
+            area_violation = (h_bb - bound_h) * w_bb 
+
+
+        
+        length_violation=0.0
+        for mm in modules:
+            
+            if mm.x + mm.width > bound_w:
+                length_violation += ( (mm.x + mm.width) - bound_w )**2
+            
+            if mm.y + mm.height > bound_h:
+                length_violation += ( (mm.y + mm.height) - bound_h )**2
+            
+            if mm.x < 0:
+                length_violation += (mm.x)**2 
+            
+            if mm.y < 0:
+                length_violation += (mm.y)**2
+
+
+        penalty_sum=area_violation+length_violation
+    else: 
+        penalty_sum=0.0
+
+    
+    area_norm   = area_bb/base_scale if base_scale > 1e-9 else area_bb
+    hpwl_norm   = hpwl/(2*math.sqrt(net_area_sum)) if net_area_sum > 1e-9 else hpwl 
+    penalty_norm= penalty_sum/base_scale if base_scale > 1e-9 else penalty_sum 
+
+    
+    area_norm   *=500
+    penalty_norm*=50 
+
+    
+    cost_val= w*area_norm + (1-w)*hpwl_norm + r*penalty_norm
+    cost_val*= cost_scale 
+
+    if return_all:
+        return (cost_val, area_norm, hpwl_norm, penalty_norm)
+    else:
+        return cost_val
+
+# ─────────────────────────────────────────────────────────────
+# Q-Learning / fast_sa
+# ─────────────────────────────────────────────────────────────
+
+Q_TABLE={} 
+ACTIONS=["rotate","move","swap"] 
+epsilon=0.3 
+alpha=0.5   
+gamma=0.9   
+
+def get_state_key(chip):
+    """현재 chip 상태를 나타내는 key 생성 (비용 기반으로 단순화)"""
+    
+    c_val=calc_combined_cost(chip.modules, w=Global_w, chip=chip, r=1.0, return_all=False)
+    return round(c_val,1) 
+
+def select_action_by_q(state_key):
+    """Q-테이블과 epsilon-greedy 전략에 따라 액션 선택"""
+    if random.random()<epsilon: 
+        return random.randrange(len(ACTIONS))
+    else: 
+        if state_key not in Q_TABLE: 
+            Q_TABLE[state_key]=[0.0,0.0,0.0]
+        arr=Q_TABLE[state_key]
+        return arr.index(max(arr)) 
+
+def update_q_value(s_key,a_idx,reward,s_next_key):
+    """Q-러닝 업데이트 규칙에 따라 Q값 갱신"""
+    if s_key not in Q_TABLE:
+        Q_TABLE[s_key]=[0.0,0.0,0.0]
+    if s_next_key not in Q_TABLE: 
+        Q_TABLE[s_next_key]=[0.0,0.0,0.0]
+    
+    q_old=Q_TABLE[s_key][a_idx] 
+    max_next=max(Q_TABLE[s_next_key]) 
+    
+    
+    q_new=q_old+alpha*(reward+gamma*max_next-q_old)
+    Q_TABLE[s_key][a_idx]=q_new
+
+
+def fast_sa(chip,max_iter=5000,P=0.99,c=20,w=Global_w,sample_moves=10,r=1.0):
+    import copy,math,random
+
+    
+    orig_st=copy.deepcopy(chip) 
+    orig_cost=calc_combined_cost(chip.modules,w,chip=chip,r=r,return_all=False)
+    up_diffs=[] 
+    
+    
+    for _ in range(sample_moves+10): 
+        s_key=get_state_key(chip) 
+        a_idx=select_action_by_q(s_key) 
+        action_name=ACTIONS[a_idx]
+
+        old_c=calc_combined_cost(chip.modules,w,chip=chip,r=r,return_all=False)
+        msg_tmp,op_tmp,op_data_tmp=chip.apply_specific_operation(action_name) 
+        new_c=calc_combined_cost(chip.modules,w,chip=chip,r=r,return_all=False)
+        dE=new_c-old_c 
+
+        rew=(old_c-new_c) 
+        s_next=get_state_key(chip) 
+        update_q_value(s_key,a_idx,rew,s_next) 
+
+        if dE>0: 
+            up_diffs.append(dE)
+        chip=copy.deepcopy(orig_st) 
+
+    if up_diffs:
+        delta_avg=sum(up_diffs)/len(up_diffs) 
+    else: 
+        delta_avg=1.0 
+    if delta_avg<1e-12: 
+        delta_avg=1.0
+
+    T1_scale_factor=1.0 
+    T1=abs(delta_avg/math.log(P))*T1_scale_factor 
+    print(f"Initial T1={T1:.3f}")
+
+    best_chip=copy.deepcopy(chip) 
+    best_cost=orig_cost
+    cur_cost =orig_cost 
+
+    temps=[] 
+    for n in range(1,max_iter+1): 
+        st_cp=copy.deepcopy(chip) 
+        oldc=cur_cost 
+
+        
+        cost_diffs=[] 
+        best_local_cost=float('inf') 
+        best_op_data=None 
+
+        for _ in range(sample_moves):
+            s_key2=get_state_key(st_cp) 
+            a_idx2=select_action_by_q(s_key2) 
+            act2=ACTIONS[a_idx2]
+
+            old_c2=calc_combined_cost(st_cp.modules,w,chip=st_cp,r=r,return_all=False)
+            msg2,op2,opd2=st_cp.apply_specific_operation(act2) 
+            new_c2=calc_combined_cost(st_cp.modules,w,chip=st_cp,r=r,return_all=False)
+
+            rew2=(old_c2-new_c2) 
+            s_next2=get_state_key(st_cp) 
+            update_q_value(s_key2,a_idx2,rew2,s_next2) 
+
+            dE_from_iter_start=new_c2-oldc 
+            cost_diffs.append(abs(dE_from_iter_start)) 
+
+            if new_c2<best_local_cost: 
+                best_local_cost=new_c2
+                best_op_data=opd2 
+            
+            st_cp=copy.deepcopy(chip) 
+
+        
+        if cost_diffs: 
+            delta_cost=max(sum(cost_diffs)/len(cost_diffs),1e-6) 
+        else: 
+            delta_cost=1e-6
+
+        if n==1: 
+            T=T1
+        elif 2<=n<=300: 
+            T=max((T1*delta_cost)/(n*c),1e-6) 
+        else: 
+            T=max((T1*delta_cost)/n,1e-6) 
+        temps.append(T) 
+
+        
+        old_chip=copy.deepcopy(chip) 
+        old_cost=cur_cost 
+        
+        
+        if best_op_data:
+            re_msg,re_op=chip.reapply_operation(best_op_data) 
+        else: 
+            
+            s_rand_key = get_state_key(chip)
+            a_rand_idx = select_action_by_q(s_rand_key)
+            act_rand = ACTIONS[a_rand_idx]
+            re_msg, re_op, best_op_data = chip.apply_specific_operation(act_rand)
+
+
+        new_c=calc_combined_cost(chip.modules,w,chip=chip,r=r,return_all=False)
+        dE=new_c-old_cost 
+
+        
+        if dE<0: 
+            cur_cost=new_c
+            if new_c<best_cost: 
+                best_cost=new_c
+                best_chip=copy.deepcopy(chip)
+            acc_str="ACCEPT (better)"
+            acc_prob=1.0
+        else: 
+            if T<1e-12: 
+                acc_prob=0.0
+            else:
+                acc_prob=math.exp(-abs(dE)/T) 
+            
+            if random.random()<acc_prob: 
+                cur_cost=new_c
+                
+                
+                
+                
+                acc_str="ACCEPT (worse)"
+            else: 
+                chip=copy.deepcopy(old_chip)
+                cur_cost=old_cost 
+                acc_str="REJECT"
+
+        
+        if n % 100 == 0 or n == 1 or n == max_iter : 
+            print(f"[Iter={n:4d}] T={T:8.4f} | Cost={cur_cost:8.3f} (Best={best_cost:8.3f}) | dE={dE:8.3f} | Prob={acc_prob:6.4f} | {acc_str} | Op: {best_op_data.get('op') if best_op_data else 'N/A'}")
+            
+
+        
+        # if n%2000==0:
+        #     best_chip.plot_b_tree(iteration=n)
+        #     plt.show()
+
+    
+    plt.figure(figsize=(10,6)) 
+    plt.plot(range(1,max_iter+1),temps)
+    plt.xlabel("Iteration")
+    plt.ylabel("Temperature")
+    plt.title("Temperature vs. Iteration in SA")
+    plt.grid(True)
+    plt.show()
+
+    return best_chip 
+
+def partial_sa_for_initial(chip, pre_iter=500):
+    """
+    부분적으로 짧은 SA를 먼저 돌려서,
+    완전 무작위 초기 해보다는 어느 정도 정돈된 상태를 얻기 위한 함수.
+    """
+    print("\n[Info] --- Running partial SA for initial layout ---\n")
+    improved_chip = fast_sa(
+        chip,
+        max_iter=pre_iter, 
+        P=0.95, 
+        c=50,  
+        w=Global_w,
+        sample_moves=15, 
+        r=1.0 
+    )
+    print("[Info] --- Partial SA ended. Using improved initial layout ---\n")
+    return improved_chip
+
+# ─────────────────────────────────────────────────────────────
+# 4. 파일 파싱(Yal, GSRC)
+# ─────────────────────────────────────────────────────────────
+
+def parse_yal(file_path):
+    modules=[]
+    with open(file_path,'r') as f:
+        lines=f.readlines()
+    module_data={}
+    in_network=False 
+    for line in lines:
+        line=line.strip()
+        if not line or line.startswith("/*") or line.startswith("*"): 
+            continue
+        
+        
+        if line.startswith("MODULE"):
+            parts = line.split()
+            if len(parts) > 1:
+                module_name=parts[1].strip(';')
+                module_data={'name':module_name,'net':[]} 
+            continue
+        
+        
+        if line.startswith("TYPE"):
+            parts = line.split()
+            if len(parts) > 1:
+                module_type=parts[1].strip(';')
+                module_data['type']=module_type
+            continue
+
+        
+        if line.startswith("DIMENSIONS"):
+            
+            
+            dim_str = line.replace("DIMENSIONS","").replace(";","").strip()
+            coords = []
+            
+            if '(' in dim_str and ')' in dim_str:
+                points_str = re.findall(r'\([\d\.\s,]+\)', dim_str)
+                for p_str in points_str:
+                    try:
+                        x, y = map(float, p_str.strip('()').split(','))
+                        coords.append(x)
+                        coords.append(y)
+                    except ValueError:
+                        
+                        pass
+            
+            if not coords: 
+                dims=list(map(float,dim_str.split()))
+            else:
+                dims = coords
+
+            if len(dims) == 2: 
+                module_data['width']=dims[0]
+                module_data['height']=dims[1]
+            elif len(dims) >= 4: 
+                x_coords=[dims[i] for i in range(0,len(dims),2)]
+                y_coords=[dims[i+1] for i in range(0,len(dims),2)]
+                if x_coords and y_coords:
+                    module_data['width']=max(x_coords)-min(x_coords)
+                    module_data['height']=max(y_coords)-min(y_coords)
+                else: 
+                    module_data['width']=0
+                    module_data['height']=0
+            else: 
+                module_data['width']=0
+                module_data['height']=0
+            continue
+            
+        
+        if line.startswith("NETWORK"):
+            in_network=True
+            continue
+        if line.startswith("ENDNETWORK"):
+            in_network=False
+            continue
+            
+        
+        if line.startswith("ENDMODULE"):
+            if 'name' in module_data and 'width' in module_data and 'height' in module_data and 'type' in module_data:
+                 modules.append(Module(
+                    name=module_data['name'],
+                    width=module_data['width'],
+                    height=module_data['height'],
+                    module_type=module_data['type'],
+                    net=module_data.get('net',[]) 
+                ))
+            module_data={} 
+            continue
+            
+        
+        if in_network:
+            
+            module_data['net'].append(line.strip(';'))
+            continue
+            
+    return modules
+
+def parse_gsrc_blocks(blocks_file):
+    modules=[]
+    
+    
+    pattern=re.compile(r"^(sb\d+)\s+\S+\s+(\d+)\s+(.*)$") 
+    with open(blocks_file,'r') as f:
+        lines=f.readlines()
+    for line in lines:
+        line=line.strip()
+        
+        if not line or line.startswith('#') or line.startswith('UCSC'):
+            continue
+        
+        if line.startswith('p') and 'terminal' in line:
+            continue
+
+        match=pattern.match(line)
+        if match:
+            blk_name=match.group(1)
+            
+            coords_str=match.group(3)
+            
+            
+            
+            cpat=re.compile(r"\(([\-\d\.]+)\s*,\s*([\-\d\.]+)\)") 
+            found_coords=cpat.findall(coords_str)
+            
+            xs,ys=[],[]
+            for (sx,sy) in found_coords:
+                try:
+                    xs.append(float(sx))
+                    ys.append(float(sy))
+                except ValueError:
+                    print(f"[Warning] Could not parse coordinates for {blk_name}: ({sx},{sy})")
+                    continue 
+            
+            if not xs or not ys: 
+                print(f"[Warning] No valid coordinates found for {blk_name}")
+                continue
+
+            minx,maxx=min(xs),max(xs)
+            miny,maxy=min(ys),max(ys)
+            w_=maxx-minx
+            h_=maxy-miny
+            modules.append(Module(blk_name,w_,h_,'BLOCK',net=[])) 
+    return modules
+
+def parse_gsrc_nets(nets_file,modules):
+    name_map={m.name:m for m in modules} 
+    i=0
+    with open(nets_file,'r') as f:
+        lines=f.readlines()
+    
+    net_id_counter=0 
+    while i<len(lines):
+        line=lines[i].strip()
+        
+        if not line or line.startswith('#') or line.startswith('UCLA'):
+            i+=1
+            continue
+        
+        
+        if line.startswith('NetDegree'):
+            parts=line.split(':')
+            deg_str=(parts[1].strip() if len(parts)>1 else "0")
+            try:
+                deg=int(deg_str)
+            except ValueError: 
+                print(f"[Warning] Could not parse NetDegree: {line}")
+                deg=0 
+            
+            net_name=f"Net{net_id_counter}" 
+            net_id_counter+=1
+            
+            pins_in_current_net=[] 
+            for _ in range(deg): 
+                i+=1
+                if i>=len(lines): break 
+                pin_ln=lines[i].strip()
+                pin_prt=pin_ln.split() 
+                if pin_prt:
+                    pin_name=pin_prt[0]
+                    if pin_name in name_map: 
+                        pins_in_current_net.append(pin_name)
+                    
+            
+            for pn_name in pins_in_current_net:
+                name_map[pn_name].net.append(net_name)
+        i+=1
+    return modules
+
+# ─────────────────────────────────────────────────────────────
+# 5. 메인 실행
+# ─────────────────────────────────────────────────────────────
+if __name__=="__main__":
+    # Yal 파일 또는 GSRC 파일 선택 사용
+    # --- Yal 예제 ---
+    #blocks_file="./example/ami49.yal"
+    #modules=parse_yal(blocks_file)
+
+    #--- GSRC 예제 ---
+    blocks_file="./example/n300.blocks"
+    nets_file  ="./example/n300.nets"
+    modules=parse_gsrc_blocks(blocks_file)
+    modules=parse_gsrc_nets(nets_file,modules) # nets 정보는 blocks 파싱 후에 추가
+
+    if not modules:
+        print("[Error] No modules loaded. Exiting.")
+        sys.exit(1)
+
+
+    # [A] 초기 Chip 생성 -> B*-Tree 랜덤 구성 및 초기 좌표 계산
+    chip=Chip(modules)
+    chip.calculate_coordinates() # 초기 좌표 계산
+    
+    # 초기 상태 플롯
+    print("Plotting initial random B*-Tree layout...")
+    chip.plot_b_tree(iteration="Initial_Random")
+    plt.show()
+
+
+    # 초기 비용 계산 및 출력
+    init_cost, aN,hN,pN = calc_combined_cost(chip.modules, w=Global_w, chip=chip, r=1.0, return_all=True)
+    w_init,h_init,area_init=calculate_total_area(chip.modules)
+    hpwl_init =calculate_hpwl(chip.modules)
+    print("=== Initial Random Chip State ===")
+    print(f"BoundingBox: W={w_init:.2f}, H={h_init:.2f}, Area={area_init:.2f}")
+    print(f"HPWL (absolute)             = {hpwl_init:.2f}")
+    print(f"Normalized Area             = {aN:.3f}")
+    print(f"Normalized HPWL             = {hN:.3f}")
+    print(f"Normalized Penalty          = {pN:.3f}")
+    print(f"Initial Cost (w={Global_w:.2f}, r=1.0) = {init_cost:.3f}")
+
+
+    # [B] 부분적 SA(짧은 SA)를 통한 초기 배치 개선 (선택적)
+    use_partial_sa = input("Run partial SA for initial layout improvement? (y/n): ")
+    if use_partial_sa.lower().startswith('y'):
+        chip = partial_sa_for_initial(chip, pre_iter=500) # 반복 횟수 조정 가능 (예: 500~2000)
+        print("Plotting layout after partial SA...")
+        chip.plot_b_tree(iteration="After_Partial_SA")
+        plt.show()
+
+        # 부분 SA 후 비용 재계산 및 출력
+        partial_sa_cost, paN,phN,ppN = calc_combined_cost(chip.modules, w=Global_w, chip=chip, r=1.0, return_all=True)
+        pw,ph,parea=calculate_total_area(chip.modules)
+        phpwl=calculate_hpwl(chip.modules)
+        print("=== Chip State After Partial SA ===")
+        print(f"BoundingBox: W={pw:.2f}, H={ph:.2f}, Area={parea:.2f}")
+        print(f"HPWL (absolute)             = {phpwl:.2f}")
+        print(f"Normalized Area             = {paN:.3f}")
+        print(f"Normalized HPWL             = {phN:.3f}")
+        print(f"Normalized Penalty          = {ppN:.3f}")
+        print(f"Cost after Partial SA       = {partial_sa_cost:.3f}")
+
+
+    # [C] 메인 SA 실행 (무조건 실행)
+    print("\n[Info] Proceeding with Full FastSA (Q-Learning) optimization...")
+    best_chip=fast_sa(chip, # 이전 단계의 chip 객체를 사용
+                        max_iter=4000,    # 반복 횟수 (예: 5000 ~ 20000)
+                        P=0.95,            # 초기 수용 확률
+                        c=100,             # 냉각 스케줄 상수 (조정 필요)
+                        w=Global_w,        # Area vs HPWL 가중치
+                        sample_moves=30,   # 각 온도 스텝에서 시도할 이동 수
+                        r=1.0)             # Penalty 가중치
+
+    # SA 종료 후 최종 결과 비용 계산 및 출력 (Compaction 전)
+    final_sa_cost, fsa_aN, fsa_hN, fsa_pN = calc_combined_cost(best_chip.modules, w=Global_w, chip=best_chip, r=1.0, return_all=True)
+    fsa_w,fsa_h,fsa_area = calculate_total_area(best_chip.modules)
+    fsa_hpwl = calculate_hpwl(best_chip.modules)
+    fsa_total_mod_area = sum(m.area for m in best_chip.modules)
+    fsa_ds = ((fsa_area - fsa_total_mod_area) / fsa_area) * 100 if fsa_area > 1e-9 else 0.0
+    
+    print("\n=== Full FastSA (Q-Learning) Finished (Before Final Compaction) ===")
+    print(f"SA BoundingBox: W={fsa_w:.2f}, H={fsa_h:.2f}, Area={fsa_area:.2f}")
+    print(f"SA HPWL (absolute)             = {fsa_hpwl:.2f}")
+    print(f"SA Normalized Area             = {fsa_aN:.3f}")
+    print(f"SA Normalized HPWL             = {fsa_hN:.3f}")
+    print(f"SA Normalized Penalty          = {fsa_pN:.3f}")
+    print(f"SA Cost (w={Global_w:.2f}, r=1.0)   = {final_sa_cost:.3f}")
+    print(f"SA DeadSpace Rate                = {fsa_ds:.2f}%")
+
+    # SA 종료 후 배치 플롯 (Compaction 전)
+    print("Plotting SA optimized layout (before final compaction)...")
+    best_chip.plot_b_tree(iteration="Final_Optimized_SA_Before_Compact")
+    plt.show()
+
+    # 요청하신 최종 Compaction 수행
+    print("\n[Info] Performing final compaction on the best SA result...")
+    best_chip.compact_floorplan_final() 
+
+    # Compaction 후 최종 결과 비용 계산 및 출력
+    print("\n=== After Final Compaction ===")
+    final_compacted_cost, fc_aN, fc_hN, fc_pN = calc_combined_cost(best_chip.modules, w=Global_w, chip=best_chip, r=1.0, return_all=True)
+    fc_w, fc_h, fc_area = calculate_total_area(best_chip.modules)
+    fc_hpwl = calculate_hpwl(best_chip.modules)
+
+    fc_total_mod_area = sum(m.area for m in best_chip.modules)
+    if fc_area > 1e-9:
+        fc_ds = ((fc_area - fc_total_mod_area) / fc_area) * 100
+    else:
+        fc_ds = 0.0
+
+    print(f"Compacted BoundingBox: W={fc_w:.2f}, H={fc_h:.2f}, Area={fc_area:.2f}")
+    print(f"Compacted HPWL (absolute)         = {fc_hpwl:.2f}")
+    print(f"Compacted Normalized Area         = {fc_aN:.3f}") 
+    print(f"Compacted Normalized HPWL         = {fc_hN:.3f}")
+    print(f"Compacted Normalized Penalty      = {fc_pN:.3f}") 
+    print(f"Compacted Cost (w={Global_w:.2f}, r=1.0) = {final_compacted_cost:.3f}")
+    print(f"Compacted DeadSpace Rate          = {fc_ds:.2f}%")
+
+    # Compaction 후 최종 배치 플롯
+    print("Plotting final compacted layout...")
+    # iteration 이름을 변경하여 compaction 후임을 명시
+    best_chip.plot_b_tree(iteration="Final_Compacted_Layout") 
+    plt.show()
+
+    print("\nFloorplanning process completed.")
