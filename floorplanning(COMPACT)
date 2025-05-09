@@ -1147,7 +1147,7 @@ if __name__=="__main__":
         chip = partial_sa_for_initial(chip, pre_iter=500) # 반복 횟수 조정 가능 (예: 500~2000)
         print("Plotting layout after partial SA...")
         chip.plot_b_tree(iteration="After_Partial_SA")
-        plt.show()
+        #plt.show()
 
         # 부분 SA 후 비용 재계산 및 출력
         partial_sa_cost, paN,phN,ppN = calc_combined_cost(chip.modules, w=Global_w, chip=chip, r=1.0, return_all=True)
