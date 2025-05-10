@@ -75,7 +75,7 @@ Global_w=0.66
 global Global_r_penalty # 1차 SA 및 기본 페널티 가중치
 Global_r_penalty = 1.0
 global Global_r_dead_space # 2차 SA에서 Dead Space에 대한 추가 가중치
-Global_r_dead_space =  5 # 예시 값, 실험을 통해 조정 필요
+Global_r_dead_space =  50 # 예시 값, 실험을 통해 조정 필요
 
 
 class Module:
