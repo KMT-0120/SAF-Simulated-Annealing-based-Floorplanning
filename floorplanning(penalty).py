@@ -73,9 +73,9 @@ except Exception as e:
 global Global_w
 Global_w=0.66 
 global Global_r_penalty # 1차 SA 및 기본 페널티 가중치
-Global_r_penalty = 1.0
+Global_r_penalty = 70.0
 global Global_r_dead_space # 2차 SA에서 Dead Space에 대한 추가 가중치
-Global_r_dead_space =  50 # 예시 값, 실험을 통해 조정 필요
+Global_r_dead_space =  80 # 예시 값, 실험을 통해 조정 필요
 
 
 class Module:
@@ -759,13 +759,14 @@ def calc_combined_cost(modules, w=Global_w, chip=None, r_penalty=Global_r_penalt
         penalty_total_sum_val=area_violation_val+length_violation_val
     
     penalty_normalized_val = penalty_total_sum_val/base_area_scale if base_area_scale > 1e-9 else penalty_total_sum_val 
-    penalty_normalized_val *=50  
     
     # Dead Space 계산 (항상 계산)
     total_module_actual_area = sum(m.area for m in modules)
     dead_space_absolute_val = bbox_area - total_module_actual_area
-    dead_space_normalized_val = dead_space_absolute_val / base_area_scale if base_area_scale > 1e-9 else dead_space_absolute_val
-    dead_space_normalized_val *= 500 # 면적과 유사한 스케일링 (예시)
+    if bbox_area > 1e-9:
+        dead_space_normalized_val = (dead_space_absolute_val / bbox_area) * 100.0
+    else:
+        dead_space_normalized_val = 0.0
 
     # 최종 비용 계산
     cost_final_val = w * area_normalized + (1 - w) * hpwl_normalized + r_penalty * penalty_normalized_val
