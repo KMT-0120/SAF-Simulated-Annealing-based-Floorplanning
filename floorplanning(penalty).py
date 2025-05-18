@@ -73,7 +73,7 @@ except Exception as e:
 global Global_w
 Global_w=0.66 
 global Global_r_penalty # 1차 SA 및 기본 페널티 가중치
-Global_r_penalty = 70.0
+Global_r_penalty = 1.0
 global Global_r_dead_space # 2차 SA에서 Dead Space에 대한 추가 가중치
 Global_r_dead_space =  80 # 예시 값, 실험을 통해 조정 필요
 
@@ -758,7 +758,8 @@ def calc_combined_cost(modules, w=Global_w, chip=None, r_penalty=Global_r_penalt
                 length_violation_val += (m_obj_penalty.y)**2
         penalty_total_sum_val=area_violation_val+length_violation_val
     
-    penalty_normalized_val = penalty_total_sum_val/base_area_scale if base_area_scale > 1e-9 else penalty_total_sum_val 
+    avg_module_area = base_area_scale / len(modules) if len(modules) > 0 else 1.0
+    penalty_normalized_val = penalty_total_sum_val/avg_module_area if avg_module_area > 1e-9 else penalty_total_sum_val 
     
     # Dead Space 계산 (항상 계산)
     total_module_actual_area = sum(m.area for m in modules)
@@ -1274,12 +1275,12 @@ if __name__=="__main__":
     print("\n[Info] Compaction된 결과를 사용하여 2단계 전체 FastSA (Dead Space 및 Penalty 비용) 진행 중...") 
     # 2단계 SA는 first_sa_best_chip (이미 컴팩션됨)을 입력으로 사용
     second_sa_best_chip = fast_sa(first_sa_best_chip, 
-                                 max_iter=2000,    
+                                 max_iter=20000,    
                                  P_initial=0.95,            
                                  c_cooling=100, 
                                  w_cost_sa=Global_w,         
                                  sample_moves_num=30,   
-                                 r_penalty_sa=Global_r_penalty, # 2단계에서도 페널티 가중치 적용
+                                 r_penalty_sa=Global_r_penalty * 10, # 2단계에서도 페널티 가중치 적용
                                  r_dead_space_sa=Global_r_dead_space, # Dead Space 가중치 적용
                                  use_ds_in_cost_sa=True) # Dead Space 비용 사용 활성화         
 
