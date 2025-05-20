@@ -1,5 +1,7 @@
 ## initial condition(made by partial SA) + 1st SA(iter2000) + 2st SA(iter35000)
-### partial SA and 1st SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty, where standard chip is square which has width, height = sqrt(all modules area sum*1.2) )
+### partial SA and 1st SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty)
+
+(where standard chip is square which has width, height = sqrt(all modules area sum*1.2) )
 
 ### ami49(DeadSpace ratio = 3.7%)
 #### initial condition(made by partial SA)
