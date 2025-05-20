@@ -5,12 +5,19 @@
 #### initial condition(made by partial SA)
 ![4ami49(2 7%)](https://github.com/user-attachments/assets/40ef2e4a-8de8-4caf-965f-dc62f2b07b37)
 === 부분 SA 후 Chip 상태 ===
+
 경계 상자: W=6888.00, H=6258.00, 면적=43105104.00
+
 HPWL (절대값)             = 0.00
+
 정규화된 면적             = 608.049
+
 정규화된 HPWL             = 0.000
+
 정규화된 페널티          = 3.508
+
 정규화된 DeadSpace       = 17.770
+
 부분 SA 후 비용 (페널티만 사용) = 0.405
 
 
