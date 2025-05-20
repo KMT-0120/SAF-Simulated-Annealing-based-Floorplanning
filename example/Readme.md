@@ -1,8 +1,8 @@
 ## initial condition(made by partial SA) + 1st SA(iter2000) + 2st SA(iter35000)
-###partial SA and 1st SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty, where standard chip is square which has width, height = sqrt(all modules area sum*1.2) )
+### partial SA and 1st SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty, where standard chip is square which has width, height = sqrt(all modules area sum*1.2) )
 
-###ami49
-####initial condition(made by partial SA)
+### ami49
+#### initial condition(made by partial SA)
 ![4ami49(2 7%)](https://github.com/user-attachments/assets/40ef2e4a-8de8-4caf-965f-dc62f2b07b37)
 === 부분 SA 후 Chip 상태 ===
 경계 상자: W=6888.00, H=6258.00, 면적=43105104.00
