@@ -59,6 +59,9 @@ HPWL (절대값) = 0.00, 정규화된 HPWL = 0.000
 최종 Compaction 후 비용 (w_area=0.66, r_penalty=1.00, r_ds=80.00) = 0.642
 
 
+
+
+
 ## initial condition(made by partial SA) + 1st SA(iter2000) + 2st SA(iter40000)
 ### partial SA and 1st SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty)
 
