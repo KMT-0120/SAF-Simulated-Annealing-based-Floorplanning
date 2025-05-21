@@ -1,4 +1,4 @@
-## initial condition(made by partial SA) + 1st SA(iter2000) + 2st SA(iter35000)
+## [ami49] initial condition(made by partial SA) + 1st SA(iter2000) + 2st SA(iter35000)
 ### partial SA and 1st SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty)
 
 (where standard chip is square which has width, height = sqrt(all modules area sum*1.2) )
@@ -62,7 +62,7 @@ HPWL (절대값) = 0.00, 정규화된 HPWL = 0.000
 
 
 
-## initial condition(made by partial SA) + 1st SA(iter2000) + 2st SA(iter40000)
+## [n100] initial condition(made by partial SA) + 1st SA(iter2000) + 2st SA(iter40000)
 ### partial SA and 1st SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty)
 
 (where standard chip is square which has width, height = sqrt(all modules area sum*1.2) )
