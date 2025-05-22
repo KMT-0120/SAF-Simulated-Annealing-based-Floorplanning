@@ -128,6 +128,7 @@ HPWL (절대값) = 143252.00, 정규화된 HPWL = 169.059
 
 
 
+
 ## [n200] initial condition(made by partial SA) + 1st SA(iter2000) + 2st SA(iter30000)
 ### partial SA and 1st SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty)
 
@@ -136,6 +137,7 @@ HPWL (절대값) = 143252.00, 정규화된 HPWL = 169.059
 ### n200(DeadSpace ratio = 6.87%)
 #### initial condition(made by partial SA)
 ![n200_initial(by_partial_SA)](https://github.com/user-attachments/assets/4c38569d-91bc-4704-ae2e-f76b08304b3f)
+
 === 부분 SA 후 Chip 상태 ===
 
 경계 상자: W=502.00, H=501.00, 면적=251502.00
