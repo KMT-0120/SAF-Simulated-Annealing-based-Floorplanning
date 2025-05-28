@@ -59,6 +59,66 @@ HPWL (절대값) = 0.00, 정규화된 HPWL = 0.000
 
 최종 Compaction 후 비용 (w_area=0.66, r_penalty=1.00, r_ds=80.00) = 0.670
 
+## [apte] initial condition(made by partial SA) + 1st SA(iter2000) + 2st SA(iter40000)
+### partial SA and 1st SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty)
+
+(where standard chip is square which has width, height = sqrt(all modules area sum*1.2) )
+
+### apte(DeadSpace ratio = 3.25%)
+#### initial condition(made by partial SA)
+![image](https://github.com/user-attachments/assets/cffbdbf2-d78a-4c45-af46-421de55cbe16)
+=== 부분 SA 후 Chip 상태 ===
+
+경계 상자: W=9438.00, H=5490.00, 면적=51814620.00
+
+HPWL (절대값)             = 0.00
+
+정규화된 면적             = 556.409
+
+정규화된 HPWL             = 0.000
+
+정규화된 페널티          = 2.929
+
+정규화된 DeadSpace       = 10.138
+
+부분 SA 후 비용 (페널티만 사용) = 0.370
+
+![image](https://github.com/user-attachments/assets/1765ba27-d9f0-46b6-adcf-01bb9c3bced9)
+![image](https://github.com/user-attachments/assets/0d382a31-500d-449c-86a7-940ae5d76c66)
+
+=== 1단계 SA + Compaction 후 상태 (참고용 Dead Space 포함 비용) ===
+
+경계 상자: W=9438.00, H=5490.00, 면적=51814620.00
+
+HPWL (절대값) = 0.00, 정규화된 HPWL = 0.000
+
+정규화된 면적 = 556.409, 정규화된 페널티 = 2.929
+
+정규화된 DeadSpace = 10.138, 실제 DeadSpace = 5252992.00 (10.14%)
+
+비용 (모든 항 포함) = 1.181
+
+![image](https://github.com/user-attachments/assets/576757b7-a043-4677-8b57-78dc11a35e2d)
+![image](https://github.com/user-attachments/assets/2a28c3f2-72ae-4c8d-9769-597f3f4a87de)
+
+=== 최종 Compaction 후 (2단계 SA 결과 기반) ===
+
+최종 Compaction 후 경계 상자: W=6578.00, H=7316.00, 면적=48124648.00
+
+최종 Compaction 후 HPWL (절대값)         = 0.00
+
+최종 Compaction 후 정규화된 면적         = 516.784
+
+최종 Compaction 후 정규화된 HPWL         = 0.000
+
+최종 Compaction 후 정규화된 페널티      = 0.000
+
+최종 Compaction 후 정규화된 DeadSpace  = 3.248
+
+최종 Compaction 후 실제 DeadSpace 면적 = 1563020.00 (3.25%)
+
+최종 Compaction 후 비용 (w_area=0.66, r_penalty=1.00, r_ds=80.00) = 0.601
+
 ## [ami33] initial condition(made by partial SA) + 1st SA(iter5000) + 2st SA(iter45000)
 ### partial SA and 1st SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty)
 
