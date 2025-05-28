@@ -67,6 +67,8 @@ HPWL (절대값) = 0.00, 정규화된 HPWL = 0.000
 ### apte(DeadSpace ratio = 3.25%)
 #### initial condition(made by partial SA)
 ![image](https://github.com/user-attachments/assets/cffbdbf2-d78a-4c45-af46-421de55cbe16)
+
+
 === 부분 SA 후 Chip 상태 ===
 
 경계 상자: W=9438.00, H=5490.00, 면적=51814620.00
