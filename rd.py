@@ -1,4 +1,3 @@
-
 #해당 주석 문단은 지우지말것(특히 GPT 사용시, 지워지는지 또한 확인한 후 다시 추가), 
 # GPT요구사항(해당 줄 이외의 주석내용은 GPT 요구사항아니므로 반영하지말것)GPT가 임의로 코드 전체 골격 함수 이름, 변수명 변경하지 말것, 변경하였을경우 자세한 이유와 변경사항 명시할것것
 
@@ -22,6 +21,8 @@
 #     Q-Learning 제거 버전 - 완전 랜덤 액션 선택 (33.33%씩)
 #     기존 fast_sa 함수를 multiprocess_k_parent_sa로 대체
 #     기존 코드 구조와 함수명 최대한 유지
+#7/11 요청에 따라 백업용 단일 프로세스 함수(k_parent_sa_single_process) 제거
+#7/12 요청에 따라 온도 설정 및 냉각 스케줄링을 참조 코드를 기반으로 수정. 병렬 처리 로직 수정.
 
 import matplotlib
 matplotlib.use('Agg')  # GUI 백엔드 비활성화 (멀티프로세싱 호환성)
@@ -96,15 +97,9 @@ Global_r_dead_space =  80 # 예시 값, 실험을 통해 조정 필요
 # K-Parent Based Search를 위한 새로운 클래스들
 @dataclass
 class ParentState:
-    """각 parent state를 관리하는 클래스"""
+    """각 parent state를 관리하는 클래스 (단순화 버전)"""
     chip_state: any  # Chip 객체
-    temperature: float
-    current_chip_state: any  # 현재 탐색 중인 Chip 상태
-    current_temperature: float
-    depth_count: int = 0
-    fail_count: int = 0  # 연속 실패 횟수
     cost: float = float('inf')
-    last_operation: dict = None  # 마지막으로 수행한 operation 정보
 
 class Module:
     def __init__(self, name: str, width: float, height: float, module_type: str, net=None):
@@ -358,57 +353,6 @@ class Chip:
         
         self.calculate_coordinates() 
         return (msg,op,op_data) 
-
-    def reapply_operation(self, op_data):
-        if not op_data or 'op' not in op_data:
-            return ("[NoOpData or Invalid OpData]", "NoOp")
-
-        all_btnodes=self.collect_all_nodes() 
-        def find_btnode_by_module_name(name_str): 
-            if name_str is None: return None
-            for btnode_item in all_btnodes: 
-                if btnode_item.module.name == name_str:
-                    return btnode_item
-            return None
-
-        op_type=op_data.get('op','NoOp')
-        msg = f"[{op_type}] 연산 재적용." 
-
-        if op_type=='rotate':
-            nodeA_name=op_data.get('nodeA_name')
-            btnodeA=find_btnode_by_module_name(nodeA_name)
-            if btnodeA is None:
-                return(f"[{op_type}] Node {nodeA_name} not found",op_type) 
-            self.rotate_node(btnodeA) 
-            msg=f"[Op1: Rotate] Re-applied rotate on {nodeA_name}" 
-        elif op_type=='move':
-            nodeA_name=op_data.get('nodeA_name')
-            btnodeA=find_btnode_by_module_name(nodeA_name)
-            if btnodeA is None:
-                return(f"[{op_type}] Node {nodeA_name} not found",op_type)
-            if btnodeA.parent is None: 
-                 msg = f"[Op2: Move] Cannot re-apply move to ROOT node {nodeA_name}." 
-            else:
-                msg=self.move_node(btnodeA)
-                msg+=f" [Re-applied on {nodeA_name}]" 
-        elif op_type=='swap':
-            nodeA_name=op_data.get('nodeA_name')
-            nodeB_name=op_data.get('nodeB_name')
-            btnodeA=find_btnode_by_module_name(nodeA_name)
-            btnodeB=find_btnode_by_module_name(nodeB_name)
-            if (not btnodeA) or (not btnodeB):
-                missing_nodes_str = []
-                if not btnodeA: missing_nodes_str.append(nodeA_name)
-                if not btnodeB: missing_nodes_str.append(nodeB_name)
-                return(f"[{op_type}] Node(s) {', '.join(missing_nodes_str)} not found",op_type)
-            self.swap_nodes(btnodeA, btnodeB) 
-            msg=f"[Op3: Swap] Re-applied swap: {nodeA_name} <-> {nodeB_name}" 
-        else:
-            msg=f"[NoOp or invalid op_type: {op_type}]" 
-            op_type="NoOp"
-        
-        self.calculate_coordinates() 
-        return(msg,op_type) 
 
     def randomize_b_tree(self,w):
         """B*-Tree 구조를 랜덤하게 재구성하고 비용을 반환"""
@@ -834,89 +778,69 @@ ACTIONS=["rotate","move","swap"]
 def select_random_action():
     """
     완전 랜덤으로 액션 선택 (각각 33.33% 확률)
-    Q-Learning을 사용하지 않음
     """
     return random.choice(ACTIONS)
 
 # 멀티프로세싱 워커 함수
 def worker_sa_depth_search(worker_data):
     """
-    각 워커 프로세스에서 실행되는 깊이 탐색 함수
-    Q-Learning 없이 완전 랜덤 액션 선택
+    각 워커 프로세스에서 실행되는 깊이 탐색 함수.
+    전역적으로 결정된 온도를 받아 SA를 수행.
     """
     try:
         worker_id = worker_data['worker_id']
-        chip_state = worker_data['chip_state']
+        parent_chip_state = worker_data['chip_state']
         max_depth = worker_data['max_depth']
-        current_temp = worker_data['temperature']
+        temperature_for_worker = worker_data['temperature'] # 전역 온도
         w_cost_sa = worker_data['w_cost_sa']
         r_penalty_sa = worker_data['r_penalty_sa']
         r_dead_space_sa = worker_data['r_dead_space_sa']
         use_ds_in_cost_sa = worker_data['use_ds_in_cost_sa']
         
-        # 현재 칩 상태 복사
-        current_chip = copy.deepcopy(chip_state)
+        current_chip = copy.deepcopy(parent_chip_state)
         
-        # 초기 비용 계산
-        current_cost = calc_combined_cost(current_chip.modules, w_cost_sa, chip=current_chip,
-                                        r_penalty=r_penalty_sa, r_dead_space=r_dead_space_sa,
-                                        use_dead_space_in_cost=use_ds_in_cost_sa, return_all=False)
+        initial_cost = calc_combined_cost(current_chip.modules, w_cost_sa, chip=current_chip,
+                                          r_penalty=r_penalty_sa, r_dead_space=r_dead_space_sa,
+                                          use_dead_space_in_cost=use_ds_in_cost_sa, return_all=False)
         
-        best_found_chip = copy.deepcopy(current_chip)
-        best_found_cost = current_cost
-        found_improvement = False
-        accepted_moves = 0
-        rejected_moves = 0
+        best_chip_in_worker = copy.deepcopy(current_chip)
+        best_cost_in_worker = initial_cost
         
-        # depth만큼 탐색
-        for depth in range(max_depth):
-            # 완전 랜덤으로 액션 선택 (Q-Learning 제거)
-            action_name_depth = select_random_action()
+        # depth만큼 SA 탐색 수행
+        for _ in range(max_depth):
+            action_name = select_random_action()
 
-            old_cost_depth = current_cost
-            msg_depth, op_depth, op_data_depth = current_chip.apply_specific_operation(action_name_depth)
-            new_cost_depth = calc_combined_cost(current_chip.modules, w_cost_sa, chip=current_chip,
-                                              r_penalty=r_penalty_sa, r_dead_space=r_dead_space_sa,
-                                              use_dead_space_in_cost=use_ds_in_cost_sa, return_all=False)
+            chip_before_move = copy.deepcopy(current_chip)
+            cost_before_move = calc_combined_cost(chip_before_move.modules, w_cost_sa, chip=chip_before_move,
+                                                  r_penalty=r_penalty_sa, r_dead_space=r_dead_space_sa,
+                                                  use_dead_space_in_cost=use_ds_in_cost_sa, return_all=False)
 
-            # SA 수락 조건
-            delta_e_depth = new_cost_depth - old_cost_depth
+            current_chip.apply_specific_operation(action_name)
+            cost_after_move = calc_combined_cost(current_chip.modules, w_cost_sa, chip=current_chip,
+                                                 r_penalty=r_penalty_sa, r_dead_space=r_dead_space_sa,
+                                                 use_dead_space_in_cost=use_ds_in_cost_sa, return_all=False)
+
+            delta_e = cost_after_move - cost_before_move
             accept_move = False
-            if delta_e_depth < 0:
+            if delta_e < 0:
                 accept_move = True
-            elif current_temp > 1e-12:
-                probability = math.exp(-abs(delta_e_depth) / current_temp)
+            elif temperature_for_worker > 1e-12:
+                probability = math.exp(-abs(delta_e) / temperature_for_worker)
                 accept_move = random.random() < probability
 
             if accept_move:
-                current_cost = new_cost_depth
-                accepted_moves += 1
-                
-                # 개선된 해 발견
-                if current_cost < best_found_cost:
-                    best_found_chip = copy.deepcopy(current_chip)
-                    best_found_cost = current_cost
-                    found_improvement = True
+                if cost_after_move < best_cost_in_worker:
+                    best_cost_in_worker = cost_after_move
+                    best_chip_in_worker = copy.deepcopy(current_chip)
             else:
-                # 수락하지 않으면 이전 상태로 복원
-                current_chip = copy.deepcopy(best_found_chip)
-                current_cost = best_found_cost
-                rejected_moves += 1
-
-            # 온도 감소
-            current_temp *= 0.95
-            current_temp = max(current_temp, 1e-6)
+                current_chip = chip_before_move
         
         # 결과 반환
         return {
             'worker_id': worker_id,
             'success': True,
-            'found_improvement': found_improvement,
-            'best_chip': best_found_chip,
-            'best_cost': best_found_cost,
-            'final_temperature': current_temp,
-            'accepted_moves': accepted_moves,
-            'rejected_moves': rejected_moves,
+            'best_chip': best_chip_in_worker,
+            'best_cost': best_cost_in_worker,
             'error': None
         }
         
@@ -924,48 +848,40 @@ def worker_sa_depth_search(worker_data):
         return {
             'worker_id': worker_data.get('worker_id', -1),
             'success': False,
-            'found_improvement': False,
             'best_chip': None,
             'best_cost': float('inf'),
-            'final_temperature': 0,
-            'accepted_moves': 0,
-            'rejected_moves': 0,
             'error': str(e)
         }
 
-# 멀티프로세싱 K-Parent Based SA (Q-Learning 제거 버전)
-def multiprocess_k_parent_sa(chip_obj, max_iter=20000, k_parents=None, max_depth=15, patience=3,
+# 멀티프로세싱 K-Parent Based SA (새로운 온도 스케줄링 적용)
+def multiprocess_k_parent_sa(chip_obj, max_iter=20000, k_parents=None, max_depth=15,
                             P_initial=0.99, c_cooling=20, w_cost_sa=Global_w, sample_moves_num=30,
                             r_penalty_sa=Global_r_penalty, r_dead_space_sa=Global_r_dead_space,
                             use_ds_in_cost_sa=False):
     """
-    멀티프로세싱을 사용한 K-Parent Based Simulated Annealing
-    Q-Learning 없이 완전 랜덤 액션 선택
+    멀티프로세싱 K-Parent SA. 참조된 코드를 기반으로 전역 온도 및 냉각 스케줄을 적용.
     """
     
-    # k는 논리 프로세서 수 - 2로 설정 (기본값)
     if k_parents is None:
         k_parents = max(1, mp.cpu_count() - 2)
     
-    print(f"\n[Info] 멀티프로세싱 K-Parent Based SA 시작 (Q-Learning 없음, 완전 랜덤): k={k_parents}, max_depth={max_depth}, patience={patience}")
+    print(f"\n[Info] 멀티프로세싱 K-Parent Based SA 시작 (전역 온도 스케줄링): k={k_parents}, max_depth={max_depth}")
     print(f"[Info] 사용 가능한 CPU 코어: {mp.cpu_count()}, 사용할 프로세스: {k_parents}")
     
-    # 초기 온도 계산을 위한 샘플링 (기존 로직 유지)
     original_state_chip = copy.deepcopy(chip_obj)
     original_cost_val = calc_combined_cost(chip_obj.modules, w_cost_sa, chip=chip_obj,
                                          r_penalty=r_penalty_sa, r_dead_space=r_dead_space_sa,
                                          use_dead_space_in_cost=use_ds_in_cost_sa, return_all=False)
-    uphill_differences = []
     
+    # 초기 온도 T1 계산
+    uphill_differences = []
     temp_chip_for_t1 = copy.deepcopy(chip_obj)
     for _ in range(sample_moves_num + 10):
-        # Q-Learning 없이 랜덤 액션 선택
         action_name_t1 = select_random_action()
-
         old_cost_t1 = calc_combined_cost(temp_chip_for_t1.modules, w_cost_sa, chip=temp_chip_for_t1,
                                        r_penalty=r_penalty_sa, r_dead_space=r_dead_space_sa,
                                        use_dead_space_in_cost=use_ds_in_cost_sa, return_all=False)
-        msg_t1, op_t1, op_data_t1 = temp_chip_for_t1.apply_specific_operation(action_name_t1)
+        temp_chip_for_t1.apply_specific_operation(action_name_t1)
         new_cost_t1 = calc_combined_cost(temp_chip_for_t1.modules, w_cost_sa, chip=temp_chip_for_t1,
                                        r_penalty=r_penalty_sa, r_dead_space=r_dead_space_sa,
                                        use_dead_space_in_cost=use_ds_in_cost_sa, return_all=False)
@@ -981,8 +897,7 @@ def multiprocess_k_parent_sa(chip_obj, max_iter=20000, k_parents=None, max_depth
     if avg_uphill_delta < 1e-12:
         avg_uphill_delta = 1.0
 
-    temp_t1_scale_factor = 1.0
-    temp_t1_initial = abs(avg_uphill_delta / math.log(P_initial)) * temp_t1_scale_factor
+    temp_t1_initial = abs(avg_uphill_delta / math.log(P_initial))
     cost_type_msg = "DeadSpace 및 Penalty 포함" if use_ds_in_cost_sa else "Penalty만 포함"
     print(f"초기 온도 T1={temp_t1_initial:.3f} (비용함수: {cost_type_msg})")
 
@@ -992,52 +907,66 @@ def multiprocess_k_parent_sa(chip_obj, max_iter=20000, k_parents=None, max_depth
     global_best_cost = original_cost_val
 
     for i in range(k_parents):
-        # 각 parent를 약간씩 다르게 초기화
         parent_chip = copy.deepcopy(chip_obj)
-        
-        # 몇 번의 랜덤 변화를 줘서 다양성 확보
         for _ in range(random.randint(1, 5)):
-            # Q-Learning 없이 랜덤 액션 선택
             action_name_init = select_random_action()
             parent_chip.apply_specific_operation(action_name_init)
-
         cost = calc_combined_cost(parent_chip.modules, w_cost_sa, chip=parent_chip,
                                 r_penalty=r_penalty_sa, r_dead_space=r_dead_space_sa,
                                 use_dead_space_in_cost=use_ds_in_cost_sa, return_all=False)
-        temp = temp_t1_initial * (0.8 + 0.4 * random.random())  # 온도 다양성
+        parent_states.append(ParentState(chip_state=copy.deepcopy(parent_chip), cost=cost))
 
-        parent = ParentState(
-            chip_state=copy.deepcopy(parent_chip),
-            temperature=temp,
-            current_chip_state=copy.deepcopy(parent_chip),
-            current_temperature=temp,
-            cost=cost
-        )
-
-        parent_states.append(parent)
-
-        # 전역 최적해 갱신
         if cost < global_best_cost:
             global_best_cost = cost
             global_best_chip = copy.deepcopy(parent_chip)
 
     temperatures_log = []
+    current_temp_t = temp_t1_initial
 
     # 멀티프로세싱 풀 생성
     try:
         with mp.Pool(processes=k_parents) as pool:
-            # K-Parent Based 탐색 루프
             for n_iter in range(1, max_iter + 1):
-                improved_any = False
+                best_cost_before_iter = global_best_cost
+                
+                # --- 새로운 온도 계산 로직 시작 ---
+                chip_for_temp_calc = copy.deepcopy(global_best_chip)
+                cost_before_moves = global_best_cost
+                cost_differences_local = []
+                
+                temp_chip_for_local_search = copy.deepcopy(chip_for_temp_calc)
+                for _ in range(sample_moves_num):
+                    action_name_local = select_random_action()
+                    temp_chip_for_local_search.apply_specific_operation(action_name_local)
+                    cost_after_local_move = calc_combined_cost(temp_chip_for_local_search.modules, w_cost_sa, chip=temp_chip_for_local_search,
+                                                             r_penalty=r_penalty_sa, r_dead_space=r_dead_space_sa,
+                                                             use_dead_space_in_cost=use_ds_in_cost_sa, return_all=False)
+                    delta_e_from_iter_start_local = cost_after_local_move - cost_before_moves
+                    cost_differences_local.append(abs(delta_e_from_iter_start_local))
+                    temp_chip_for_local_search = copy.deepcopy(chip_for_temp_calc)
+
+                avg_cost_difference_local = 1e-6
+                if cost_differences_local:
+                    avg_cost_difference_local = max(sum(cost_differences_local) / len(cost_differences_local), 1e-6)
+
+                if n_iter == 1:
+                    current_temp_t = temp_t1_initial
+                elif 2 <= n_iter <= 300:
+                    current_temp_t = max((temp_t1_initial * avg_cost_difference_local) / (n_iter * c_cooling), 1e-6)
+                else:
+                    current_temp_t = max((temp_t1_initial * avg_cost_difference_local) / n_iter, 1e-6)
+                
+                temperatures_log.append(current_temp_t)
+                # --- 새로운 온도 계산 로직 종료 ---
 
                 # 각 parent에 대해 워커 데이터 준비
                 worker_tasks = []
                 for i, parent in enumerate(parent_states):
                     worker_data = {
                         'worker_id': i,
-                        'chip_state': parent.current_chip_state,
+                        'chip_state': parent.chip_state,
                         'max_depth': max_depth,
-                        'temperature': parent.current_temperature,
+                        'temperature': current_temp_t,
                         'w_cost_sa': w_cost_sa,
                         'r_penalty_sa': r_penalty_sa,
                         'r_dead_space_sa': r_dead_space_sa,
@@ -1047,66 +976,22 @@ def multiprocess_k_parent_sa(chip_obj, max_iter=20000, k_parents=None, max_depth
 
                 # 병렬로 깊이 탐색 실행
                 try:
-                    # 타임아웃 설정으로 무한 대기 방지
                     worker_results = pool.map_async(worker_sa_depth_search, worker_tasks).get(timeout=120)
                     
-                    # 결과 처리
-                    for i, result in enumerate(worker_results):
+                    # *** 수정된 결과 처리 로직 ***
+                    for result in worker_results:
                         if result['success']:
-                            parent = parent_states[i]
+                            worker_id = result['worker_id']
+                            # 각 Parent를 자신의 워커가 찾은 결과로 업데이트
+                            parent_states[worker_id] = ParentState(
+                                chip_state=copy.deepcopy(result['best_chip']),
+                                cost=result['best_cost']
+                            )
                             
-                            # parent의 현재 상태 및 온도 갱신
-                            parent.current_chip_state = copy.deepcopy(result['best_chip'])
-                            parent.current_temperature = result['final_temperature']
-
-                            if result['found_improvement']:
-                                # 새로운 상태로 parent 갱신
-                                worst_idx = max(range(len(parent_states)), key=lambda idx: parent_states[idx].cost)
-                                parent_states[worst_idx] = ParentState(
-                                    chip_state=copy.deepcopy(result['best_chip']),
-                                    temperature=parent.current_temperature,
-                                    current_chip_state=copy.deepcopy(result['best_chip']),
-                                    current_temperature=parent.current_temperature,
-                                    cost=result['best_cost']
-                                )
-
-                                # depth counting 초기화
-                                parent.depth_count = 0
-                                parent.fail_count = 0
-                                improved_any = True
-                                
-                                # 전역 최적해 갱신
-                                if result['best_cost'] < global_best_cost:
-                                    global_best_cost = result['best_cost']
-                                    global_best_chip = copy.deepcopy(result['best_chip'])
-
-                            else:
-                                # 실패 처리
-                                parent.fail_count += 1
-
-                                if parent.fail_count >= patience:
-                                    # 온도를 높여서 변동성 증가
-                                    parent.temperature *= 1.5
-                                    parent.current_temperature = parent.temperature
-                                    parent.fail_count = 0
-
-                                    # 또는 새로운 랜덤 상태로 초기화 (선택사항)
-                                    if parent.temperature > temp_t1_initial * 2:
-                                        parent.chip_state = copy.deepcopy(global_best_chip)
-                                        parent.current_chip_state = copy.deepcopy(global_best_chip)
-                                        # Q-Learning 없이 랜덤 액션 선택
-                                        action_name_reset = select_random_action()
-                                        parent.current_chip_state.apply_specific_operation(action_name_reset)
-                                        parent.cost = calc_combined_cost(parent.current_chip_state.modules, w_cost_sa, chip=parent.current_chip_state,
-                                                                       r_penalty=r_penalty_sa, r_dead_space=r_dead_space_sa,
-                                                                       use_dead_space_in_cost=use_ds_in_cost_sa, return_all=False)
-                                        parent.temperature = temp_t1_initial
-                                        parent.current_temperature = temp_t1_initial
-                                else:
-                                    # parent로 돌아가서 parent의 온도로 재시작
-                                    parent.current_chip_state = copy.deepcopy(parent.chip_state)
-                                    parent.current_temperature = parent.temperature
-                                    parent.depth_count = 0
+                            # 전역 최적해 갱신 확인
+                            if result['best_cost'] < global_best_cost:
+                                global_best_cost = result['best_cost']
+                                global_best_chip = copy.deepcopy(result['best_chip'])
                         else:
                             print(f"[Warning] Worker {result['worker_id']} 실패: {result['error']}")
 
@@ -1117,239 +1002,32 @@ def multiprocess_k_parent_sa(chip_obj, max_iter=20000, k_parents=None, max_depth
                     print(f"[Error] Iter {n_iter}: 멀티프로세싱 오류 - {e}")
                     continue
 
-                # 전체 온도 감소
-                if not improved_any:
-                    for parent in parent_states:
-                        parent.temperature *= 0.95
-                        parent.temperature = max(parent.temperature, 1e-6)
-
-                # 현재 반복의 평균 온도 계산
-                avg_temp = sum(p.temperature for p in parent_states) / len(parent_states)
-                temperatures_log.append(avg_temp)
+                improved_this_iter = global_best_cost < best_cost_before_iter
 
                 # 진행상황 출력
                 if n_iter % 100 == 0 or n_iter == 1 or n_iter == max_iter:
                     avg_cost = sum(p.cost for p in parent_states) / len(parent_states)
-                    print(f"[MP K-Parent Iter={n_iter:4d}] T_avg={avg_temp:8.4f} | Cost_avg={avg_cost:8.3f} | Best={global_best_cost:8.3f} | Improved: {improved_any}")
+                    print(f"[MP K-Parent Iter={n_iter:4d}] T={current_temp_t:8.4f} | Cost_avg={avg_cost:8.3f} | Best={global_best_cost:8.3f} | Improved: {improved_this_iter}")
 
     except Exception as e:
         print(f"[Error] 멀티프로세싱 풀 생성/실행 중 오류: {e}")
-        print("[Info] 단일 프로세스 모드로 전환합니다.")
-        return k_parent_sa_single_process(chip_obj, max_iter, k_parents, max_depth, patience,
-                                        P_initial, c_cooling, w_cost_sa, sample_moves_num,
-                                        r_penalty_sa, r_dead_space_sa, use_ds_in_cost_sa)
+        print("[Info] 멀티프로세싱 SA가 비정상적으로 종료되었습니다. 현재까지의 최적해를 반환합니다.")
 
     # 온도 변화 그래프 출력
     try:
         plt.figure(figsize=(10, 6))
-        plt.plot(range(1, max_iter + 1), temperatures_log)
+        plt.plot(range(1, len(temperatures_log) + 1), temperatures_log)
         plt.xlabel("반복 횟수")
-        plt.ylabel("평균 온도")
-        plt.title("멀티프로세싱 K-Parent SA 온도 변화 추이 (Q-Learning 없음)")
+        plt.ylabel("온도")
+        plt.title("멀티프로세싱 K-Parent SA 온도 변화 추이 (전역 스케줄링)")
         plt.grid(True)
         
-        # 안전하게 저장
-        temp_filename = "temperature_log.png"
+        temp_filename = "temperature_log_global.png"
         plt.savefig(temp_filename, dpi=150, bbox_inches='tight')
         print(f"[Info] 온도 변화 그래프가 {temp_filename}으로 저장되었습니다.")
-        plt.close()  # 메모리 해제
+        plt.close()
     except Exception as e:
         print(f"[Warning] 온도 그래프 생성 실패: {e}")
-
-    return global_best_chip
-
-# 백업용 단일 프로세스 K-Parent SA (멀티프로세싱 실패 시 사용) - Q-Learning 제거 버전
-def k_parent_sa_single_process(chip_obj, max_iter=5000, k_parents=None, max_depth=15, patience=3,
-                              P_initial=0.99, c_cooling=20, w_cost_sa=Global_w, sample_moves_num=10,
-                              r_penalty_sa=Global_r_penalty, r_dead_space_sa=Global_r_dead_space,
-                              use_ds_in_cost_sa=False):
-    """
-    단일 프로세스 K-Parent Based Simulated Annealing (백업용)
-    Q-Learning 없이 완전 랜덤 액션 선택
-    """
-    
-    if k_parents is None:
-        k_parents = max(1, mp.cpu_count() - 2)
-    
-    print(f"\n[Info] 단일 프로세스 K-Parent Based SA 시작 (Q-Learning 없음): k={k_parents}, max_depth={max_depth}, patience={patience}")
-    
-    # 초기 온도 계산 (기존 로직과 동일)
-    original_state_chip = copy.deepcopy(chip_obj)
-    original_cost_val = calc_combined_cost(chip_obj.modules, w_cost_sa, chip=chip_obj,
-                                         r_penalty=r_penalty_sa, r_dead_space=r_dead_space_sa,
-                                         use_dead_space_in_cost=use_ds_in_cost_sa, return_all=False)
-    uphill_differences = []
-    
-    temp_chip_for_t1 = copy.deepcopy(chip_obj)
-    for _ in range(sample_moves_num + 10):
-        # Q-Learning 없이 랜덤 액션 선택
-        action_name_t1 = select_random_action()
-
-        old_cost_t1 = calc_combined_cost(temp_chip_for_t1.modules, w_cost_sa, chip=temp_chip_for_t1,
-                                       r_penalty=r_penalty_sa, r_dead_space=r_dead_space_sa,
-                                       use_dead_space_in_cost=use_ds_in_cost_sa, return_all=False)
-        msg_t1, op_t1, op_data_t1 = temp_chip_for_t1.apply_specific_operation(action_name_t1)
-        new_cost_t1 = calc_combined_cost(temp_chip_for_t1.modules, w_cost_sa, chip=temp_chip_for_t1,
-                                       r_penalty=r_penalty_sa, r_dead_space=r_dead_space_sa,
-                                       use_dead_space_in_cost=use_ds_in_cost_sa, return_all=False)
-        delta_e_t1 = new_cost_t1 - old_cost_t1
-
-        if delta_e_t1 > 0:
-            uphill_differences.append(delta_e_t1)
-        temp_chip_for_t1 = copy.deepcopy(original_state_chip)
-
-    avg_uphill_delta = 1.0
-    if uphill_differences:
-        avg_uphill_delta = sum(uphill_differences) / len(uphill_differences)
-    if avg_uphill_delta < 1e-12:
-        avg_uphill_delta = 1.0
-
-    temp_t1_scale_factor = 1.0
-    temp_t1_initial = abs(avg_uphill_delta / math.log(P_initial)) * temp_t1_scale_factor
-
-    # K개의 parent state 초기화
-    parent_states = []
-    global_best_chip = copy.deepcopy(chip_obj)
-    global_best_cost = original_cost_val
-
-    for i in range(k_parents):
-        parent_chip = copy.deepcopy(chip_obj)
-        
-        for _ in range(random.randint(1, 5)):
-            # Q-Learning 없이 랜덤 액션 선택
-            action_name_init = select_random_action()
-            parent_chip.apply_specific_operation(action_name_init)
-
-        cost = calc_combined_cost(parent_chip.modules, w_cost_sa, chip=parent_chip,
-                                r_penalty=r_penalty_sa, r_dead_space=r_dead_space_sa,
-                                use_dead_space_in_cost=use_ds_in_cost_sa, return_all=False)
-        temp = temp_t1_initial * (0.8 + 0.4 * random.random())
-
-        parent = ParentState(
-            chip_state=copy.deepcopy(parent_chip),
-            temperature=temp,
-            current_chip_state=copy.deepcopy(parent_chip),
-            current_temperature=temp,
-            cost=cost
-        )
-
-        parent_states.append(parent)
-
-        if cost < global_best_cost:
-            global_best_cost = cost
-            global_best_chip = copy.deepcopy(parent_chip)
-
-    temperatures_log = []
-
-    # 단일 프로세스 K-Parent Based 탐색 루프
-    for n_iter in range(1, max_iter + 1):
-        improved_any = False
-
-        # 각 parent에 대해 순차적으로 깊이 탐색 수행
-        for parent in parent_states:
-            found_improvement = False
-            best_found_chip = None
-            best_found_cost = float('inf')
-
-            current_chip = copy.deepcopy(parent.current_chip_state)
-            current_cost = calc_combined_cost(current_chip.modules, w_cost_sa, chip=current_chip,
-                                            r_penalty=r_penalty_sa, r_dead_space=r_dead_space_sa,
-                                            use_dead_space_in_cost=use_ds_in_cost_sa, return_all=False)
-            current_temp = parent.current_temperature
-
-            # depth만큼 탐색
-            for depth in range(max_depth):
-                # 완전 랜덤으로 액션 선택 (Q-Learning 제거)
-                action_name_depth = select_random_action()
-
-                old_cost_depth = current_cost
-                msg_depth, op_depth, op_data_depth = current_chip.apply_specific_operation(action_name_depth)
-                new_cost_depth = calc_combined_cost(current_chip.modules, w_cost_sa, chip=current_chip,
-                                                  r_penalty=r_penalty_sa, r_dead_space=r_dead_space_sa,
-                                                  use_dead_space_in_cost=use_ds_in_cost_sa, return_all=False)
-
-                delta_e_depth = new_cost_depth - old_cost_depth
-                accept_move = False
-                if delta_e_depth < 0:
-                    accept_move = True
-                elif current_temp > 1e-12:
-                    probability = math.exp(-abs(delta_e_depth) / current_temp)
-                    accept_move = random.random() < probability
-
-                if accept_move:
-                    current_cost = new_cost_depth
-                    parent.last_operation = op_data_depth
-
-                    worst_parent_cost = max(p.cost for p in parent_states)
-                    if current_cost < worst_parent_cost:
-                        best_found_chip = copy.deepcopy(current_chip)
-                        best_found_cost = current_cost
-                        found_improvement = True
-
-                        if current_cost < global_best_cost:
-                            global_best_cost = current_cost
-                            global_best_chip = copy.deepcopy(current_chip)
-                else:
-                    current_chip = copy.deepcopy(parent.current_chip_state)
-                    current_cost = calc_combined_cost(current_chip.modules, w_cost_sa, chip=current_chip,
-                                                    r_penalty=r_penalty_sa, r_dead_space=r_dead_space_sa,
-                                                    use_dead_space_in_cost=use_ds_in_cost_sa, return_all=False)
-
-                current_temp *= 0.95
-                current_temp = max(current_temp, 1e-6)
-
-            parent.current_chip_state = current_chip
-            parent.current_temperature = current_temp
-
-            if found_improvement:
-                worst_idx = max(range(len(parent_states)), key=lambda i: parent_states[i].cost)
-                parent_states[worst_idx] = ParentState(
-                    chip_state=copy.deepcopy(best_found_chip),
-                    temperature=parent.current_temperature,
-                    current_chip_state=copy.deepcopy(best_found_chip),
-                    current_temperature=parent.current_temperature,
-                    cost=best_found_cost
-                )
-
-                parent.depth_count = 0
-                parent.fail_count = 0
-                improved_any = True
-
-            else:
-                parent.fail_count += 1
-
-                if parent.fail_count >= patience:
-                    parent.temperature *= 1.5
-                    parent.current_temperature = parent.temperature
-                    parent.fail_count = 0
-
-                    if parent.temperature > temp_t1_initial * 2:
-                        parent.chip_state = copy.deepcopy(global_best_chip)
-                        parent.current_chip_state = copy.deepcopy(global_best_chip)
-                        # Q-Learning 없이 랜덤 액션 선택
-                        action_name_reset = select_random_action()
-                        parent.current_chip_state.apply_specific_operation(action_name_reset)
-                        parent.cost = calc_combined_cost(parent.current_chip_state.modules, w_cost_sa, chip=parent.current_chip_state,
-                                                       r_penalty=r_penalty_sa, r_dead_space=r_dead_space_sa,
-                                                       use_dead_space_in_cost=use_ds_in_cost_sa, return_all=False)
-                        parent.temperature = temp_t1_initial
-                        parent.current_temperature = temp_t1_initial
-                else:
-                    parent.current_chip_state = copy.deepcopy(parent.chip_state)
-                    parent.current_temperature = parent.temperature
-                    parent.depth_count = 0
-
-        if not improved_any:
-            for parent in parent_states:
-                parent.temperature *= 0.95
-                parent.temperature = max(parent.temperature, 1e-6)
-
-        avg_temp = sum(p.temperature for p in parent_states) / len(parent_states)
-        temperatures_log.append(avg_temp)
-
-        if n_iter % 100 == 0 or n_iter == 1 or n_iter == max_iter:
-            avg_cost = sum(p.cost for p in parent_states) / len(parent_states)
-            print(f"[Single K-Parent Iter={n_iter:4d}] T_avg={avg_temp:8.4f} | Cost_avg={avg_cost:8.3f} | Best={global_best_cost:8.3f} | Improved: {improved_any}")
 
     return global_best_chip
 
@@ -1360,15 +1038,12 @@ def fast_sa(chip_obj, max_iter=5000, P_initial=0.99, c_cooling=20,
             use_ds_in_cost_sa=False):
     """
     기존 fast_sa 함수를 멀티프로세싱 k_parent_sa로 대체하는 래퍼 함수
-    기존 코드의 호환성을 위해 함수명과 인터페이스 유지
-    Q-Learning 제거 버전
     """
     return multiprocess_k_parent_sa(
         chip_obj=chip_obj,
         max_iter=max_iter,
-        k_parents=None,  # 자동으로 CPU 코어 수 - 2로 설정
+        k_parents=None,
         max_depth=20,
-        patience=7,
         P_initial=P_initial,
         c_cooling=c_cooling,
         w_cost_sa=w_cost_sa,
@@ -1379,7 +1054,7 @@ def fast_sa(chip_obj, max_iter=5000, P_initial=0.99, c_cooling=20,
     )
 
 def partial_sa_for_initial(chip_obj, pre_iter=500): 
-    print("\n[Info] --- 초기 레이아웃 개선을 위한 부분 K-Parent SA 실행 (Q-Learning 없음) ---") 
+    print("\n[Info] --- 초기 레이아웃 개선을 위한 부분 K-Parent SA 실행 ---") 
     improved_chip_obj = fast_sa(
         chip_obj,
         max_iter=pre_iter, 
@@ -1387,8 +1062,8 @@ def partial_sa_for_initial(chip_obj, pre_iter=500):
         c_cooling=50,  
         w_cost_sa=Global_w, 
         sample_moves_num=15,
-        r_penalty_sa=Global_r_penalty, # 부분 SA는 기본 페널티 가중치 사용      
-        use_ds_in_cost_sa=False # 부분 SA는 Dead Space 비용 사용 안함
+        r_penalty_sa=Global_r_penalty, 
+        use_ds_in_cost_sa=False
     )
     print("[Info] --- 부분 K-Parent SA 종료. 개선된 초기 레이아웃 사용 ---") 
     return improved_chip_obj
@@ -1574,14 +1249,14 @@ if __name__=="__main__":
         print(f"[Info] 멀티프로세싱 시작 방법이 이미 설정됨")
     
     print(f"[Info] 사용 가능한 CPU 코어 수: {mp.cpu_count()}")
-    print(f"[Info] Q-Learning이 제거되었습니다. 모든 액션은 33.33%씩 랜덤하게 선택됩니다.")
+    print(f"[Info] Q-Learning이 제거되었습니다. 모든 액션은 랜덤하게 선택됩니다.")
     
     # matplotlib 백엔드 확인
     print(f"[Info] matplotlib 백엔드: {matplotlib.get_backend()}")
     
     # Yal 파일 또는 GSRC 파일 선택 사용
     # --- Yal 예제 ---
-    blocks_file="./example/ami49.yal"
+    blocks_file="C:/Users/KMT/Desktop/SAF/code/yal/example/ami33.yal"
     modules=parse_yal(blocks_file)
 
     #--- GSRC 예제 ---
@@ -1639,7 +1314,7 @@ if __name__=="__main__":
         print(f"부분 K-Parent SA 후 비용 (페널티만 사용) = {partial_sa_cost_val:.3f}")
 
     # [C] 1단계 메인 K-Parent SA 실행 (페널티만 사용)
-    print("\n[Info] 1단계 전체 K-Parent SA (랜덤 액션, 페널티 비용, 멀티프로세싱) 최적화 진행 중...") 
+    print("\n[Info] 1단계 전체 K-Parent SA (페널티 비용, 멀티프로세싱) 최적화 진행 중...") 
     first_sa_best_chip = fast_sa(chip_main, 
                                 max_iter=2000, 
                                 P_initial=0.95,            
@@ -1738,7 +1413,7 @@ if __name__=="__main__":
         try:
             # GUI 백엔드로 변경 시도
             matplotlib.use('TkAgg')
-            second_sa_best_chip.plot_b_tree(iteration="Final_Display", title_suffix=" (Final Result)")
+            second_sa_best_chip.plot_b_tree(iteration="Final_Dis+play", title_suffix=" (Final Result)")
             plt.show()
         except Exception as e:
             print(f"[Info] 화면 표시 실패: {e}. PNG 파일을 확인해주세요.")
