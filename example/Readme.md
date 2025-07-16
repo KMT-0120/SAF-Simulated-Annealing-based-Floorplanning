@@ -1,4 +1,4 @@
-## [hp] initial condition(made by partial SA) + 1st SA(iter1000) + 2st SA(iter3000)
+## [hp] initial condition(made by partial SA) + 1st SA(iter1000) + 2nd SA(iter3000)
 ### partial SA and 1st SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty)
 
 (where standard chip is square which has width, height = sqrt(all modules area sum*1.2) )
@@ -59,7 +59,7 @@ HPWL (절대값) = 0.00, 정규화된 HPWL = 0.000
 
 최종 Compaction 후 비용 (w_area=0.66, r_penalty=1.00, r_ds=80.00) = 0.670
 
-## [apte] initial condition(made by partial SA) + 1st SA(iter2000) + 2st SA(iter40000)
+## [apte] initial condition(made by partial SA) + 1st SA(iter2000) + 2nd SA(iter40000)
 ### partial SA and 1st SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty)
 
 (where standard chip is square which has width, height = sqrt(all modules area sum*1.2) )
@@ -121,7 +121,7 @@ HPWL (절대값) = 0.00, 정규화된 HPWL = 0.000
 
 최종 Compaction 후 비용 (w_area=0.66, r_penalty=1.00, r_ds=80.00) = 0.601
 
-## [ami33] initial condition(made by partial SA) + 1st SA(iter5000) + 2st SA(iter45000)
+## [ami33] initial condition(made by partial SA) + 1st SA(iter5000) + 2nd SA(iter45000)
 ### partial SA and 1st SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty)
 
 (where standard chip is square which has width, height = sqrt(all modules area sum*1.2) )
@@ -180,7 +180,7 @@ HPWL (절대값) = 0.00, 정규화된 HPWL = 0.000
 최종 Compaction 후 비용 (w_area=0.66, r_penalty=1.00, r_ds=80.00) = 0.555
 
 
-## [ami49] initial condition(made by partial SA) + 1st SA(iter2000) + 2st SA(iter35000)
+## [ami49] initial condition(made by partial SA) + 1st SA(iter1000) + 2nd SA(iter1000) + 3rd SA(iter2000)
 ### partial SA and 1st SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty)
 
 (where standard chip is square which has width, height = sqrt(all modules area sum*1.2) )
@@ -244,7 +244,7 @@ Cost_avg=   7.444 | Best=   5.042
 
 
 
-## [n100] initial condition(made by partial SA) + 1st SA(iter6000) + 2st SA(iter65000)
+## [n100] initial condition(made by partial SA) + 1st SA(iter6000) + 2nd SA(iter65000)
 ### partial SA and 1st SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty)
 
 (where standard chip is square which has width, height = sqrt(all modules area sum*1.2) )
@@ -326,7 +326,7 @@ HPWL (절대값, Compaction 전)         = 237893.00
 최종 Compaction 후 비용 (w=0.66, r_pen=10.00, r_ds=80.00) = 0.781
 
 
-## [n200] initial condition(made by partial SA) + 1st SA(iter2000) + 2st SA(iter30000)
+## [n200] initial condition(made by partial SA) + 1st SA(iter2000) + 2nd SA(iter30000)
 ### partial SA and 1st SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty)
 
 (where standard chip is square which has width, height = sqrt(all modules area sum*1.2) )
@@ -393,7 +393,7 @@ HPWL (절대값) = 447508.00, 정규화된 HPWL = 533.814
 
 
 
-## [n300] initial condition(made by partial SA) + 1st SA(iter5000) + 2st SA(iter45000)
+## [n300] initial condition(made by partial SA) + 1st SA(iter5000) + 2nd SA(iter45000)
 ### partial SA and 1st SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty)
 
 (where standard chip is square which has width, height = sqrt(all modules area sum*1.2) )
