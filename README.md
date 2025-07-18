@@ -1,4 +1,4 @@
-# SAF: A 3-Stage Simulated Annealing-based Floorplanner
+# SAF: Simulated Annealing-based Floorplanning
 
 This document provides a detailed description of the 3-stage floorplanning process implemented in `floorplanning(penalty).py`. The process leverages a multi-stage, multiprocessing-based Simulated Annealing (SA) algorithm to progressively refine a chip layout. Its core strength lies in the **K-Parent Based Parallel Search** strategy and a dual-layered **Pruning (가지치기)** mechanism to enhance search efficiency and avoid local optima.
 
