@@ -31,6 +31,8 @@
 #7/16 [개선안 적용] 전역 가중치 변수들을 CostWeights 클래스로 통합하여 관리
 #7/16 [개선안 적용] 탐색 전략 변경: 매 단계에서 N개의 연산을 시도하고 그 중 가장 좋은 연산을 후보로 선택 (select_best_of_n_moves)
 #7/16 [개선안 적용] 워커 내부 프루닝: 워커가 비용 개선을 전혀 못했을 경우, 해당 워커의 모든 시도를 취소하고 초기 상태로 복귀
+#7/17 [개선안 적용] 최종 3단계 SA를 병렬 집중 탐색(Exploitation)과 직렬 탐험(Exploration)을 결합한 하이브리드 방식으로 변경
+#7/17 [개선안 적용] Parent(입력)와 Bound(계산) 개념을 분리하여 명확성 증대
 
 import matplotlib
 matplotlib.use('Agg')  # GUI 백엔드 비활성화 (멀티프로세싱 호환성)
@@ -184,30 +186,28 @@ class ContourNode:
 
 class Chip:
     def __init__(self, modules):
-        """
-        parent가 없는 경우에는 전체 module들의 area합 * 1.2와 동일한
-        정사각형을 DefaultParent로 설정합니다.
-        """
+        # [개선] Parent(입력)와 Bound(계산) 개념 분리
+        # 1. 입력 파일에 명시된 Parent 모듈을 찾아서 저장 (시각화용)
+        self.parent = next((m for m in modules if m.type == 'PARENT'), None)
+        
+        # 2. 실제 플로어플래닝에 사용될 모듈들 (Parent 제외)
         self.modules = [m for m in modules if m.type != 'PARENT'] 
 
-        self.bound = None 
-        # self.bound = next((m for m in modules if m.type == 'PARENT'), None) 
-
-        if not self.bound:
-            total_area = sum(m.area for m in self.modules)
-            side = math.sqrt(total_area*1.2) 
-            self.bound = Module(
-                name='DefaultParent',
-                width=side, 
-                height=side, 
-                module_type='PARENT'
-            )
+        # 3. 페널티 계산을 위한 Bound는 항상 동적으로 계산
+        total_area = sum(m.area for m in self.modules)
+        side = math.sqrt(total_area * 1.2) if total_area > 0 else 1000.0
+        self.bound = Module(
+            name='CalculatedBound',
+            width=side, 
+            height=side, 
+            module_type='BOUND'
+        )
 
         self.root = None 
         self.build_b_tree() 
         self.contour_line = [] 
-        self.max_width = 0.0 # 부동소수점 사용 명시
-        self.max_height = 0.0 # 부동소수점 사용 명시
+        self.max_width = 0.0
+        self.max_height = 0.0
 
 
     def build_b_tree(self): 
@@ -603,10 +603,17 @@ class Chip:
             ax1.text(m_obj.x+m_obj.width/2,m_obj.y+m_obj.height/2,
                      f'{m_obj.name}{text_suffix}',ha='center',va='center',fontsize=6) 
 
+        # [개선] Parent(입력)와 Bound(계산)를 분리하여 플로팅
         if self.bound:
             bound_rect=plt.Rectangle((0,0),self.bound.width,self.bound.height,
-                                    edgecolor='red',facecolor='none',lw=2, label='칩 경계') 
+                                    edgecolor='red',facecolor='none',lw=2, label='계산된 경계 (Penalty)') 
             ax1.add_patch(bound_rect)
+        
+        if self.parent:
+            parent_rect=plt.Rectangle((0,0),self.parent.width,self.parent.height,
+                                    edgecolor='purple',facecolor='none',lw=2, linestyle='--', label='원본 Parent 모듈')
+            ax1.add_patch(parent_rect)
+
         ax1.legend(fontsize='small') 
 
         ax1.set_title(plot_title_p, fontsize=10) 
@@ -614,8 +621,15 @@ class Chip:
         ax1.set_ylabel("Y 좌표", fontsize=8) 
         ax1.tick_params(axis='both', which='major', labelsize=7) 
         
-        plot_max_w_val = max(self.max_width, self.bound.width if self.bound else 0.0)
-        plot_max_h_val = max(self.max_height, self.bound.height if self.bound else 0.0)
+        plot_max_w_val = self.max_width
+        plot_max_h_val = self.max_height
+        if self.bound:
+            plot_max_w_val = max(plot_max_w_val, self.bound.width)
+            plot_max_h_val = max(plot_max_h_val, self.bound.height)
+        if self.parent:
+            plot_max_w_val = max(plot_max_w_val, self.parent.width)
+            plot_max_h_val = max(plot_max_h_val, self.parent.height)
+
         min_x_coord_val = min(m.x for m in self.modules) if self.modules else 0.0
         min_y_coord_val = min(m.y for m in self.modules) if self.modules else 0.0
         
@@ -759,7 +773,7 @@ def calc_combined_cost(modules, weights: CostWeights, chip=None, scaler: CostSca
     area_normalized   = bbox_area/base_area_scale if base_area_scale > 1e-9 else bbox_area
     hpwl_normalized   = hpwl_val/(2*math.sqrt(net_connected_area_sum)) if net_connected_area_sum > 1e-9 else hpwl_val 
     
-    # Penalty 계산
+    # Penalty 계산 (항상 chip.bound 기준)
     penalty_total_sum_val=0.0 
     if chip and chip.bound: 
         chip_boundary_w = chip.bound.width; chip_boundary_h = chip.bound.height
@@ -1141,103 +1155,128 @@ def multiprocess_k_parent_sa(chip_obj, scaler: CostScaler, weights: CostWeights,
 
     return global_best_chip
 
-def single_deep_sa(chip_obj, scaler: CostScaler, weights: CostWeights, max_iter=10000, P_initial=0.9, c_cooling=50, 
-                   sample_moves_num=10, use_ds_in_cost_sa=True, reheating_threshold=None):
+# ─────────────────────────────────────────────────────────────
+# NEW: 최종 3단계 하이브리드 SA
+# ─────────────────────────────────────────────────────────────
+def final_hybrid_sa(chip_obj, scaler: CostScaler, weights: CostWeights, max_iter=40000, k_workers=None,
+                    P_initial=0.8, c_cooling=10, exploitation_depth=10, exploitation_samples=30,
+                    exploration_steps=50, reheating_threshold=None):
     """
-    하나의 해를 깊게 탐색하는 단일 스레드 Simulated Annealing 함수.
+    최종 미세 조정을 위한 하이브리드 SA.
+    - 병렬 집중 탐색 (Exploitation): 다수의 워커가 현재 최적해를 집중적으로 개선 시도. (내부 프루닝 포함)
+    - 직렬 탐험 (Exploration): 하나의 탐험가가 지역 최적해 탈출을 위해 주변을 탐색.
     """
-    print(f"\n[Info] 단일 심층 SA 시작 (max_iter={max_iter})")
+    if k_workers is None:
+        k_workers = max(1, mp.cpu_count() - 2)
+
+    print(f"\n[Info] 3단계 하이브리드 SA 시작 (max_iter={max_iter}, workers={k_workers})")
     
-    current_chip_state = copy.deepcopy(chip_obj)
-    initial_cost = calc_combined_cost(current_chip_state.modules, weights=weights, chip=current_chip_state, scaler=scaler,
-                                      use_dead_space_in_cost=use_ds_in_cost_sa)
+    global_best_chip = copy.deepcopy(chip_obj)
+    global_best_cost = calc_combined_cost(global_best_chip.modules, weights=weights, chip=global_best_chip, scaler=scaler, use_dead_space_in_cost=True)
     
-    best_chip = copy.deepcopy(current_chip_state)
-    best_cost = initial_cost
-    current_cost = initial_cost
-    
+    # 탐험가(Explorer) 초기화
+    explorer_chip = copy.deepcopy(global_best_chip)
+    explorer_cost = global_best_cost
+
+    # 초기 온도 계산
     uphill_differences = []
     temp_chip_for_t1 = copy.deepcopy(chip_obj)
     for _ in range(50):
         action_name_t1 = select_random_action()
-        old_cost_t1 = calc_combined_cost(temp_chip_for_t1.modules, weights=weights, chip=temp_chip_for_t1, scaler=scaler,
-                                       use_dead_space_in_cost=use_ds_in_cost_sa)
+        old_cost_t1 = calc_combined_cost(temp_chip_for_t1.modules, weights=weights, chip=temp_chip_for_t1, scaler=scaler, use_dead_space_in_cost=True)
         temp_chip_for_t1.apply_specific_operation(action_name_t1)
-        new_cost_t1 = calc_combined_cost(temp_chip_for_t1.modules, weights=weights, chip=temp_chip_for_t1, scaler=scaler,
-                                       use_dead_space_in_cost=use_ds_in_cost_sa)
+        new_cost_t1 = calc_combined_cost(temp_chip_for_t1.modules, weights=weights, chip=temp_chip_for_t1, scaler=scaler, use_dead_space_in_cost=True)
         delta_e_t1 = new_cost_t1 - old_cost_t1
-
         if delta_e_t1 > 0:
             uphill_differences.append(delta_e_t1)
         temp_chip_for_t1 = copy.deepcopy(chip_obj)
-
-    avg_uphill_delta = 1.0
-    if uphill_differences:
-        avg_uphill_delta = sum(uphill_differences) / len(uphill_differences)
-    if avg_uphill_delta < 1e-12:
-        avg_uphill_delta = 1.0
-
+    
+    avg_uphill_delta = sum(uphill_differences) / len(uphill_differences) if uphill_differences else 1.0
+    if avg_uphill_delta < 1e-12: avg_uphill_delta = 1.0
     temp_t1_initial = abs(avg_uphill_delta / math.log(P_initial))
-    print(f"단일 심층 SA 초기 온도 T1={temp_t1_initial:.3f}")
+    print(f"하이브리드 SA 초기 온도 T1={temp_t1_initial:.3f}")
 
     temperatures_log = []
     last_improvement_iter = 0
     
-    for n_iter in range(1, max_iter + 1):
-        if reheating_threshold and (n_iter - last_improvement_iter > reheating_threshold):
-            current_temp_t = temp_t1_initial * 0.15
-            print(f"  -> Iter {n_iter}: 비용 개선 정체. 온도를 {current_temp_t:.4f}로 재가열합니다!")
-            last_improvement_iter = n_iter
-        else:
-            current_temp_t = max((temp_t1_initial * avg_uphill_delta) / (n_iter * c_cooling), 1e-6)
-        
-        temperatures_log.append(current_temp_t)
-
-        cost_before_move = current_cost
-        
-        # [전략 변경] N번의 시도 중 가장 좋은 연산을 다음 후보로 선택
-        chip_after_move, cost_after_move = select_best_of_n_moves(
-            current_chip_state, sample_moves_num, weights, scaler, use_ds_in_cost_sa
-        )
-        
-        delta_e = cost_after_move - cost_before_move
-        
-        accept_move = False
-        if delta_e < 0:
-            accept_move = True
-        elif current_temp_t > 1e-12:
-            probability = math.exp(-abs(delta_e) / current_temp_t)
-            if random.random() < probability:
-                accept_move = True
-
-        if accept_move:
-            current_chip_state = chip_after_move
-            current_cost = cost_after_move
-            if current_cost < best_cost:
-                best_cost = current_cost
-                best_chip = copy.deepcopy(current_chip_state)
-                last_improvement_iter = n_iter
-        # else: 수용하지 않으면 상태 유지
-
-        if n_iter % 200 == 0 or n_iter == 1 or n_iter == max_iter:
-            print(f"[Single Deep SA Iter={n_iter:5d}] T={current_temp_t:8.4f} | Cost={current_cost:8.3f} (Best={best_cost:8.3f})")
-
     try:
-        plt.figure(figsize=(10, 6))
-        plt.plot(range(1, len(temperatures_log) + 1), temperatures_log)
-        plt.xlabel("반복 횟수")
-        plt.ylabel("온도")
-        plt.title("단일 심층 SA 온도 변화 추이")
-        plt.grid(True)
-        
-        temp_filename = "temperature_log_single_deep.png"
-        plt.savefig(temp_filename, dpi=150, bbox_inches='tight')
-        print(f"[Info] 단일 심층 SA 온도 변화 그래프가 {temp_filename}으로 저장되었습니다.")
-        plt.close()
-    except Exception as e:
-        print(f"[Warning] 단일 심층 SA 온도 그래프 생성 실패: {e}")
+        with mp.Pool(processes=k_workers) as pool:
+            # 전체 반복 횟수를 조절하기 위해 외부 루프 사용
+            main_iter_count = 0
+            while main_iter_count < max_iter:
+                
+                # --- 온도 계산 ---
+                if reheating_threshold and (main_iter_count - last_improvement_iter > reheating_threshold):
+                    current_temp_t = temp_t1_initial * 0.15
+                    print(f"  -> Iter {main_iter_count}: 비용 개선 정체. 온도를 {current_temp_t:.4f}로 재가열합니다!")
+                    last_improvement_iter = main_iter_count
+                else:
+                    current_temp_t = max((temp_t1_initial * avg_uphill_delta) / ((main_iter_count + 1) * c_cooling), 1e-6)
+                temperatures_log.append(current_temp_t)
 
-    return best_chip
+                # =============================================================
+                # 1. 병렬 집중 탐색 (Exploitation)
+                # =============================================================
+                worker_tasks = []
+                for i in range(k_workers):
+                    worker_data = {
+                        'worker_id': i,
+                        'chip_state': global_best_chip, # 모든 워커가 현재 최적해에서 시작
+                        'max_depth': exploitation_depth,
+                        'temperature': current_temp_t,
+                        'weights': weights,
+                        'scaler': scaler,
+                        'use_ds_in_cost_sa': True,
+                        'sample_moves_num': exploitation_samples
+                    }
+                    worker_tasks.append(worker_data)
+                
+                best_cost_before_iter = global_best_cost
+                
+                try:
+                    worker_results = pool.map_async(worker_sa_depth_search, worker_tasks).get(timeout=120)
+                    for result in worker_results:
+                        if result['success'] and result['best_cost'] < global_best_cost:
+                            global_best_cost = result['best_cost']
+                            global_best_chip = copy.deepcopy(result['best_chip'])
+                except Exception as e:
+                    print(f"[Warning] 3단계 집중 탐색 중 오류 발생: {e}")
+
+                if global_best_cost < best_cost_before_iter:
+                    last_improvement_iter = main_iter_count
+
+                # =============================================================
+                # 2. 직렬 탐험 (Exploration)
+                # =============================================================
+                for _ in range(exploration_steps):
+                    cost_before_explore = explorer_cost
+                    
+                    chip_after_explore, cost_after_explore = select_best_of_n_moves(
+                        explorer_chip, 5, weights, scaler, True # 탐험가는 적은 샘플로 빠르게 탐색
+                    )
+                    
+                    delta_e = cost_after_explore - cost_before_explore
+                    if delta_e < 0 or (current_temp_t > 1e-12 and random.random() < math.exp(-abs(delta_e) / current_temp_t)):
+                        explorer_chip = chip_after_explore
+                        explorer_cost = cost_after_explore
+                        
+                        if explorer_cost < global_best_cost:
+                            global_best_cost = explorer_cost
+                            global_best_chip = copy.deepcopy(explorer_chip)
+                            last_improvement_iter = main_iter_count
+
+                main_iter_count += (k_workers * exploitation_depth) + exploration_steps
+
+                if main_iter_count % 500 < 100:
+                    print(f"[Hybrid SA Iter={main_iter_count:6d}] T={current_temp_t:8.4f} | Best Cost={global_best_cost:8.3f}")
+
+    except Exception as e:
+        print(f"[Error] 3단계 하이브리드 SA 실행 중 오류: {e}")
+
+    print("3단계 하이브리드 SA 최적화 레이아웃 플로팅 중...") 
+    global_best_chip.plot_b_tree(iteration="3rd_Hybrid_SA_Result", title_suffix=" (Stage 3 Result)", save_only=True)
+
+    return global_best_chip
 
 
 def partial_sa_for_initial(chip_obj, scaler: CostScaler, weights: CostWeights, pre_iter=500): 
@@ -1446,7 +1485,7 @@ if __name__=="__main__":
     
     # Yal 파일 또는 GSRC 파일 선택 사용
     # --- Yal 예제 ---
-    blocks_file="C:/Users/KMT/Desktop/SAF/code/yal/example/ami33.yal"
+    blocks_file="C:/Users/KMT/Desktop/SAF/code/yal/example/ami49.yal"
     modules=parse_yal(blocks_file)
 
     #--- GSRC 예제 ---
@@ -1518,8 +1557,8 @@ if __name__=="__main__":
     first_sa_best_chip = multiprocess_k_parent_sa(chip_main, 
                                 scaler=cost_scaler,
                                 weights=stage1_weights,
-                                max_iter=5000,
-                                P_initial=0.95, c_cooling=100, sample_moves_num=10,  
+                                max_iter=3000,
+                                P_initial=0.95, c_cooling=100, sample_moves_num=5,  
                                 use_ds_in_cost_sa=True, refinement_steps=15)
 
     print("1단계 K-Parent SA 최적화 레이아웃 플로팅 중...") 
@@ -1532,8 +1571,8 @@ if __name__=="__main__":
     second_sa_best_chip = multiprocess_k_parent_sa(first_sa_best_chip,
                                  scaler=cost_scaler,
                                  weights=stage2_weights,
-                                 max_iter=13000, 
-                                 P_initial=0.95, c_cooling=100, sample_moves_num=20,   
+                                 max_iter=6000, 
+                                 P_initial=0.95, c_cooling=100, sample_moves_num=10,   
                                  use_ds_in_cost_sa=True,
                                  refinement_steps=25,
                                  pruning_start_iter=3000,
@@ -1544,23 +1583,21 @@ if __name__=="__main__":
     print("2단계 K-Parent SA 최적화 레이아웃 플로팅 중...") 
     second_sa_best_chip.plot_b_tree(iteration="2nd_K-Parent_SA_Result", title_suffix=" (Stage 2 Result)", save_only=True)
     
-    # [3단계] 최종 미세 조정 (깊은 단일 탐색)
-    print("\n[Info] 3단계 단일 심층 SA (최종 미세 조정) 진행 중...")
+    # [3단계] 최종 미세 조정 (하이브리드 SA)
+    print("\n[Info] 3단계 하이브리드 SA (최종 미세 조정) 진행 중...")
     stage3_weights = copy.deepcopy(base_weights)
-    stage3_weights.r_penalty *= 15
-    stage3_weights.r_dead_space *= 1.2
-    third_sa_best_chip = single_deep_sa(second_sa_best_chip,
+    stage3_weights.r_penalty *= 10
+    stage3_weights.r_dead_space *= 10
+    third_sa_best_chip = final_hybrid_sa(second_sa_best_chip,
                                         scaler=cost_scaler,
                                         weights=stage3_weights,
                                         max_iter=40000,
                                         P_initial=0.8,
                                         c_cooling=10,
-                                        sample_moves_num=30
+                                        exploitation_samples=30,
+                                        reheating_threshold=5000
                                         ) 
     
-    print("3단계 단일 심층 SA 최적화 레이아웃 플로팅 중...") 
-    third_sa_best_chip.plot_b_tree(iteration="3rd_Single_SA_Result", title_suffix=" (Stage 3 Result)", save_only=True)
-
     print("\n[Info] 최종 결과에 Compaction 수행 중...") 
     third_sa_best_chip.compact_floorplan_final()
 
