@@ -254,17 +254,17 @@ HPWL (절대값) = 0.00, 정규화된 HPWL = 0.000
 
 <img width="2983" height="1540" alt="floorplan_1st_K-Parent_SA_Result" src="https://github.com/user-attachments/assets/7d6157a2-af99-4c1f-8c24-0c23e0705213" />
 
-=== 1단계 SA 후 상태 (참고용 Dead Space 포함 비용) ===
+=== 1단계 SA 후 상태 ===
 
-[MP K-Parent Iter= 3000] T=  0.0000 | Cost_avg=   0.361 | Best=   0.341 | Improved: False
+[MP K-Parent Iter= 3000] T=  0.0000 | Cost_avg=   0.361 | Best=   0.341 
 
 
 
 <img width="2977" height="1537" alt="floorplan_2nd_K-Parent_SA_Result" src="https://github.com/user-attachments/assets/1d1d42bd-0b77-42ec-8ed5-31b52f2fcab8" />
 
-=== 2단계 SA 후 ===
+=== 2단계 SA 후 상태===
 
-[MP K-Parent Iter= 5000] T=  0.5529 | Cost_avg=  17.970 | Best=   5.205 | Improved: False
+[MP K-Parent Iter= 5000] T=  0.5529 | Cost_avg=  17.970 | Best=   5.205 
 
 
 
