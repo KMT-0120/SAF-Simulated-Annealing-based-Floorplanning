@@ -242,86 +242,45 @@ HPWL (절대값) = 0.00, 정규화된 HPWL = 0.000
 
 
 
-## [n100] initial condition(made by partial SA) + 1st SA(iter6000) + 2nd SA(iter65000)
+## [n100] initial condition(made by partial SA) + 1st SA(iter3000) + 2nd SA(iter5000) + 3rd SA(40000)
 ### partial SA and 1st SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty)
 
 (where standard chip is square which has width, height = sqrt(all modules area sum*1.2) )
 
-### n100(DeadSpace ratio = 4.27%)
+### n100(DeadSpace ratio = 3.42%)
 #### initial condition(made by partial SA)
-![1(4 2)](https://github.com/user-attachments/assets/7b634546-9866-4317-b823-c70f7162e0d7)
-부분 SA 후 레이아웃 플로팅 중...
 
-=== 부분 SA 후 Chip 상태 ===
 
-경계 상자: W=494.00, H=472.00, 면적=233168.00
 
-HPWL (절대값)             = 258949.00
+<img width="2983" height="1540" alt="floorplan_1st_K-Parent_SA_Result" src="https://github.com/user-attachments/assets/7d6157a2-af99-4c1f-8c24-0c23e0705213" />
 
-정규화된 면적             = 649.489
+=== 1단계 SA 후 상태 (참고용 Dead Space 포함 비용) ===
 
-정규화된 HPWL             = 305.598
+[MP K-Parent Iter= 3000] T=  0.0000 | Cost_avg=   0.361 | Best=   0.341 | Improved: False
 
-정규화된 페널티          = 12.470
+<img width="2977" height="1537" alt="floorplan_2nd_K-Parent_SA_Result" src="https://github.com/user-attachments/assets/1d1d42bd-0b77-42ec-8ed5-31b52f2fcab8" />
 
-정규화된 DeadSpace       = 23.016
 
-부분 SA 후 비용 (페널티만 사용) = 0.545
+=== 2단계 SA 후 ===
 
-![1-1(4 2)](https://github.com/user-attachments/assets/0f9c7fca-6522-4b14-acb0-2805bc90fb85)
-![1-3(4 2)](https://github.com/user-attachments/assets/4e69d3e3-5108-4c59-84da-4d7cb1dd3500)
+[MP K-Parent Iter= 5000] T=  0.5529 | Cost_avg=  17.970 | Best=   5.205 | Improved: False
 
-=== 1단계 SA + Compaction 후 상태 (참고용 Dead Space 포함 비용) ===
+=== 3단계(최종) SA + Compaction 후 ===
+<img width="2977" height="1537" alt="floorplan_3rd_Single_SA_Result" src="https://github.com/user-attachments/assets/43dbfe38-0f03-4a76-bfc7-cb8bf1842a59" />
+<img width="2977" height="1537" alt="floorplan_Final_Compacted_Layout" src="https://github.com/user-attachments/assets/885e8e12-a296-41b8-ae59-d155bf45d02c" />
 
-경계 상자: W=478.00, H=429.00, 면적=205062.00
+=== 최종 Compaction 후 (3단계 SA 결과 기반) ===
+최종 Compaction 후 경계 상자: W=450.00, H=413.00, 면적=185850.00
+최종 Compaction 후 HPWL (절대값)         = 239662.00
+최종 Compaction 후 스케일링된 면적 항    = 18.140
+최종 Compaction 후 스케일링된 HPWL 항    = 42.195
+최종 Compaction 후 스케일링된 페널티 항  = 0.000
+최종 Compaction 후 스케일링된 DeadSpace 항= 4.142
+최종 Compaction 후 실제 DeadSpace 면적 = 6349.00 (3.42%)
+최종 Compaction 후 비용 (w=0.66, r_penalty=15.00, r_ds=96.00) = 4.239
 
-HPWL (절대값) = 229580.00, 정규화된 HPWL = 270.938
 
-정규화된 면적 = 571.200, 정규화된 페널티 = 3.585
 
-정규화된 DeadSpace = 12.465, 실제 DeadSpace = 25561.00 (12.47%)
-
-비용 (모든 항 포함) = 1.470
-
-![1-2(4 2)](https://github.com/user-attachments/assets/3867eb7d-6d26-4108-8095-c0c018a8b489)
-
-=== 2단계 SA 후 (Compaction 전) ===
-
-경계 상자 (Compaction 전): W=456.00, H=413.00, 면적=188328.00
-
-HPWL (절대값, Compaction 전)         = 237893.00
-
-정규화된 면적 (Compaction 전)         = 524.588
-
-정규화된 HPWL (Compaction 전)         = 280.749
-
-정규화된 페널티 (Compaction 전)      = 0.000
-
-정규화된 DeadSpace (Compaction 전)  = 4.687
-
-실제 DeadSpace 면적 (Compaction 전) = 8827.00 (4.69%)
-
-비용 (Compaction 전, w=0.66, r_pen=10.00, r_ds=80.00) = 0.817
-
-![1-4(4 2)](https://github.com/user-attachments/assets/1cffb18e-3325-44b5-bb72-598899e9031e)
-
-=== 최종 Compaction 후 (2단계 SA 결과 기반) ===
-
-최종 Compaction 후 경계 상자: W=454.00, H=413.00, 면적=187502.00
-
-최종 Compaction 후 HPWL (절대값)         = 236979.00
-
-최종 Compaction 후 정규화된 면적         = 522.287
-
-최종 Compaction 후 정규화된 HPWL         = 279.670
-
-최종 Compaction 후 정규화된 페널티      = 0.000
-
-최종 Compaction 후 정규화된 DeadSpace  = 4.267
-
-최종 Compaction 후 실제 DeadSpace 면적 = 8001.00 (4.27%)
-
-최종 Compaction 후 비용 (w=0.66, r_pen=10.00, r_ds=80.00) = 0.781
 
 
 ## [n200] initial condition(made by partial SA) + 1st SA(iter2000) + 2nd SA(iter30000)
