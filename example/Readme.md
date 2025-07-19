@@ -258,26 +258,38 @@ HPWL (절대값) = 0.00, 정규화된 HPWL = 0.000
 
 [MP K-Parent Iter= 3000] T=  0.0000 | Cost_avg=   0.361 | Best=   0.341 | Improved: False
 
-<img width="2977" height="1537" alt="floorplan_2nd_K-Parent_SA_Result" src="https://github.com/user-attachments/assets/1d1d42bd-0b77-42ec-8ed5-31b52f2fcab8" />
 
+
+<img width="2977" height="1537" alt="floorplan_2nd_K-Parent_SA_Result" src="https://github.com/user-attachments/assets/1d1d42bd-0b77-42ec-8ed5-31b52f2fcab8" />
 
 === 2단계 SA 후 ===
 
 [MP K-Parent Iter= 5000] T=  0.5529 | Cost_avg=  17.970 | Best=   5.205 | Improved: False
+
+
 
 === 3단계(최종) SA + Compaction 후 ===
 <img width="2977" height="1537" alt="floorplan_3rd_Single_SA_Result" src="https://github.com/user-attachments/assets/43dbfe38-0f03-4a76-bfc7-cb8bf1842a59" />
 <img width="2977" height="1537" alt="floorplan_Final_Compacted_Layout" src="https://github.com/user-attachments/assets/885e8e12-a296-41b8-ae59-d155bf45d02c" />
 
 === 최종 Compaction 후 (3단계 SA 결과 기반) ===
+
 최종 Compaction 후 경계 상자: W=450.00, H=413.00, 면적=185850.00
+
 최종 Compaction 후 HPWL (절대값)         = 239662.00
+
 최종 Compaction 후 스케일링된 면적 항    = 18.140
+
 최종 Compaction 후 스케일링된 HPWL 항    = 42.195
+
 최종 Compaction 후 스케일링된 페널티 항  = 0.000
+
 최종 Compaction 후 스케일링된 DeadSpace 항= 4.142
+
 최종 Compaction 후 실제 DeadSpace 면적 = 6349.00 (3.42%)
+
 최종 Compaction 후 비용 (w=0.66, r_penalty=15.00, r_ds=96.00) = 4.239
+
 
 
 
