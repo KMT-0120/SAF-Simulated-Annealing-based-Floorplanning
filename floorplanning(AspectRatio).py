@@ -97,7 +97,7 @@ except Exception as e:
     print(f"[Warn] 한글 폰트 설정 중 오류 발생: {e}. 플롯의 한글이 깨질 수 있습니다.")
 
 # ─────────────────────────────────────────────────────────────
-# NEW: 비용 가중치 및 스케일링 클래스
+# 비용 가중치 및 스케일링 클래스 (penalty.py에서 가져옴)
 # ─────────────────────────────────────────────────────────────
 @dataclass
 class CostWeights:
@@ -127,13 +127,9 @@ class CostScaler:
             self.hpwl_scale = self.area_scale / 5.0 
         self.penalty_scale = target_scale / initial_penalty_norm if initial_penalty_norm > 1e-9 else 1.0
         self.dead_space_scale = target_scale / initial_ds_norm if initial_ds_norm > 1e-9 else 1.0
-
-        # 각 프로세스에서 개별적으로 출력되도록 print문은 run_optimization_for_r로 이동
-        # print("\n[Info] 비용 함수 스케일러 초기화 완료:")
-        # print(f"  - Area Scale: {self.area_scale:.4f} (초기값: {initial_area_norm:.2f})")
-        # print(f"  - HPWL Scale: {self.hpwl_scale:.4f} (초기값: {initial_hpwl_norm:.2f})")
-        # print(f"  - Penalty Scale: {self.penalty_scale:.4f} (초기값: {initial_penalty_norm:.2f})")
-        # print(f"  - Dead Space Scale: {self.dead_space_scale:.4f} (초기값: {initial_ds_norm:.2f})")
+        
+        # 각 프로세스에서 개별적으로 출력
+        print(f"  - 스케일러 초기화: Area={self.area_scale:.2f}, HPWL={self.hpwl_scale:.2f}, Penalty={self.penalty_scale:.2f}, DS={self.dead_space_scale:.2f}")
 
 
 # K-Parent Based Search를 위한 새로운 클래스들
@@ -186,29 +182,21 @@ class ContourNode:
         self.y2 = y2
 
 class Chip:
-    # --- MODIFICATION: __init__에 aspect_ratio 추가 및 경계 계산 로직 변경 ---
     def __init__(self, modules, aspect_ratio=1.0):
-        # 1. 입력 파일에 명시된 Parent 모듈을 찾아서 저장 (시각화용)
         self.parent = next((m for m in modules if m.type == 'PARENT'), None)
-        
-        # 2. 실제 플로어플래닝에 사용될 모듈들 (Parent 제외)
         self.modules = [m for m in modules if m.type != 'PARENT'] 
-
-        # 3. 페널티 계산을 위한 Bound는 항상 동적으로 계산
         total_area = sum(m.area for m in self.modules)
         
-        # 요청사항: 전체 모듈 넓이 합 * 1.1을 기준 면적으로 사용하고, R에 따라 경계 계산
         if total_area > 0:
             base_area = total_area * 1.1
             bound_h = math.sqrt(base_area / aspect_ratio)
             bound_w = aspect_ratio * bound_h
         else:
-            # 모듈이 없는 경우의 예외 처리
             bound_w = 1000.0
             bound_h = 1000.0
 
         self.bound = Module(
-            name=f'CalculatedBound_R{aspect_ratio:.1f}', # 명확성을 위해 이름에 R 추가
+            name=f'CalculatedBound_R{aspect_ratio:.1f}',
             width=bound_w, 
             height=bound_h, 
             module_type='BOUND'
@@ -253,7 +241,6 @@ class Chip:
 
 
     def _find_possible_parents_for_random_build(self):
-        """랜덤 B-Tree 생성을 위해 현재 트리에서 빈 슬롯이 있는 BTreeNode들을 찾습니다."""
         if not self.root:
             return []
         
@@ -759,11 +746,8 @@ def calculate_total_area(modules):
     height_val=(max_y_coord - min_y_coord)
     return (width_val,height_val,(width_val*height_val))
 
+# --- MODIFICATION: CostScaler를 사용하도록 calc_combined_cost 업데이트 ---
 def calc_combined_cost(modules, weights: CostWeights, chip=None, scaler: CostScaler = None, use_dead_space_in_cost=False, return_all=False, return_raw_normalized=False):
-    """
-    비용 함수. 가중치(weights)와 동적 스케일러(scaler)를 받아 각 비용 항목의 영향력을 조절.
-    return_raw_normalized=True 이면 스케일링 및 가중치 적용 전의 정규화된 값을 반환.
-    """
     if not modules: 
         if return_all:
             return (0.0, 0.0, 0.0, 0.0, 0.0) 
@@ -814,7 +798,7 @@ def calc_combined_cost(modules, weights: CostWeights, chip=None, scaler: CostSca
         hpwl_term = hpwl_normalized * scaler.hpwl_scale
         penalty_term = penalty_normalized_val * scaler.penalty_scale
         dead_space_term = dead_space_normalized_val * scaler.dead_space_scale
-    else: 
+    else: # 스케일러가 없는 경우의 대비책
         area_term = area_normalized * 500
         hpwl_term = hpwl_normalized
         penalty_term = penalty_normalized_val
@@ -856,7 +840,6 @@ def select_best_of_n_moves(current_chip, n_samples, weights, scaler, use_ds_in_c
         return current_chip, calc_combined_cost(current_chip.modules, weights=weights, chip=current_chip, scaler=scaler, use_dead_space_in_cost=use_ds_in_cost)
 
     for _ in range(n_samples):
-        # 현재 상태에서 시작하여 새로운 연산을 테스트
         temp_chip = copy.deepcopy(current_chip)
         action = select_random_action()
         temp_chip.apply_specific_operation(action)
@@ -867,7 +850,6 @@ def select_best_of_n_moves(current_chip, n_samples, weights, scaler, use_ds_in_c
             best_move_cost = new_cost
             best_move_chip = temp_chip
 
-    # 만약 어떤 연산도 유효하지 않았다면(매우 드문 경우), 원래 상태를 반환
     if best_move_chip is None:
         return current_chip, calc_combined_cost(current_chip.modules, weights=weights, chip=current_chip, scaler=scaler, use_dead_space_in_cost=use_ds_in_cost)
 
@@ -878,7 +860,6 @@ def select_best_of_n_moves(current_chip, n_samples, weights, scaler, use_ds_in_c
 def worker_sa_depth_search(worker_data):
     """
     각 워커 프로세스에서 실행되는 깊이 탐색 함수.
-    [개선] 비용 개선이 없으면 초기 상태로 복귀하는 '내부 프루닝' 적용.
     """
     try:
         worker_id = worker_data['worker_id']
@@ -890,7 +871,6 @@ def worker_sa_depth_search(worker_data):
         use_ds_in_cost_sa = worker_data['use_ds_in_cost_sa']
         sample_moves_num = worker_data['sample_moves_num']
         
-        # <<< 내부 프루닝을 위한 초기 상태 저장 >>>
         initial_chip_state = copy.deepcopy(parent_chip_state)
         initial_cost = calc_combined_cost(initial_chip_state.modules, weights=weights, chip=initial_chip_state, scaler=scaler,
                                           use_dead_space_in_cost=use_ds_in_cost_sa)
@@ -898,7 +878,7 @@ def worker_sa_depth_search(worker_data):
         current_chip = copy.deepcopy(initial_chip_state)
         best_chip_in_worker = copy.deepcopy(initial_chip_state)
         best_cost_in_worker = initial_cost
-        has_improved_locally = False # 비용이 직접 개선되었는지 추적하는 플래그
+        has_improved_locally = False
 
         for _ in range(max_depth):
             cost_before_move = calc_combined_cost(current_chip.modules, weights=weights, chip=current_chip, scaler=scaler,
@@ -921,49 +901,32 @@ def worker_sa_depth_search(worker_data):
                 if cost_after_move < best_cost_in_worker:
                     best_cost_in_worker = cost_after_move
                     best_chip_in_worker = copy.deepcopy(current_chip)
-                    # <<< 직접적인 비용 개선 시 플래그 설정 >>>
                     if delta_e < 0:
                         has_improved_locally = True
 
-        # <<< 내부 프루닝 로직 >>>
         if not has_improved_locally:
-            # 이 워커는 탐색 동안 한 번도 비용을 개선시키지 못했으므로, 모든 변경을 취소하고 원래 상태를 반환
             return {
-                'worker_id': worker_id,
-                'success': True,
-                'best_chip': initial_chip_state,
-                'best_cost': initial_cost,
-                'error': None
+                'worker_id': worker_id, 'success': True, 'best_chip': initial_chip_state,
+                'best_cost': initial_cost, 'error': None
             }
         else:
-            # 비용 개선이 있었으므로, 찾은 최적의 해를 반환
             return {
-                'worker_id': worker_id,
-                'success': True,
-                'best_chip': best_chip_in_worker,
-                'best_cost': best_cost_in_worker,
-                'error': None
+                'worker_id': worker_id, 'success': True, 'best_chip': best_chip_in_worker,
+                'best_cost': best_cost_in_worker, 'error': None
             }
         
     except Exception as e:
         return {
-            'worker_id': worker_data.get('worker_id', -1),
-            'success': False,
-            'best_chip': None,
-            'best_cost': float('inf'),
-            'error': str(e)
+            'worker_id': worker_data.get('worker_id', -1), 'success': False, 'best_chip': None,
+            'best_cost': float('inf'), 'error': str(e)
         }
 
-# 멀티프로세싱 K-Parent Based SA (새로운 온도 스케줄링 적용)
+# 멀티프로세싱 K-Parent Based SA
 def multiprocess_k_parent_sa(chip_obj, scaler: CostScaler, weights: CostWeights, max_iter=20000, k_parents=None, max_depth=15,
                             P_initial=0.99, c_cooling=20, sample_moves_num=30,
                             use_ds_in_cost_sa=False, refinement_steps=10,
                             pruning_start_iter=None, pruning_interval=1000, mutation_strength=3,
                             reheating_threshold=None, r_val_for_log=0.0):
-    """
-    멀티프로세싱 K-Parent SA.
-    """
-    
     if k_parents is None:
         k_parents = max(1, mp.cpu_count() - 2)
     if k_parents == 0: k_parents = 1
@@ -972,10 +935,9 @@ def multiprocess_k_parent_sa(chip_obj, scaler: CostScaler, weights: CostWeights,
     original_cost_val = calc_combined_cost(chip_obj.modules, weights=weights, chip=chip_obj, scaler=scaler,
                                          use_dead_space_in_cost=use_ds_in_cost_sa)
     
-    # 초기 온도 T1 계산 (이때의 샘플링은 온도 계산만을 위함)
     uphill_differences = []
     temp_chip_for_t1 = copy.deepcopy(chip_obj)
-    for _ in range(50): # 온도 계산을 위한 샘플링 횟수
+    for _ in range(50):
         action_name_t1 = select_random_action()
         old_cost_t1 = calc_combined_cost(temp_chip_for_t1.modules, weights=weights, chip=temp_chip_for_t1, scaler=scaler,
                                        use_dead_space_in_cost=use_ds_in_cost_sa)
@@ -991,12 +953,10 @@ def multiprocess_k_parent_sa(chip_obj, scaler: CostScaler, weights: CostWeights,
     avg_uphill_delta = 1.0
     if uphill_differences:
         avg_uphill_delta = sum(uphill_differences) / len(uphill_differences)
-    if avg_uphill_delta < 1e-12:
-        avg_uphill_delta = 1.0
+    if avg_uphill_delta < 1e-12: avg_uphill_delta = 1.0
 
     temp_t1_initial = abs(avg_uphill_delta / math.log(P_initial)) if P_initial < 1.0 else 1.0
 
-    # K개의 parent state 초기화
     parent_states = []
     global_best_chip = copy.deepcopy(chip_obj)
     global_best_cost = original_cost_val
@@ -1014,11 +974,9 @@ def multiprocess_k_parent_sa(chip_obj, scaler: CostScaler, weights: CostWeights,
             global_best_cost = cost
             global_best_chip = copy.deepcopy(parent_chip)
 
-    temperatures_log = []
     current_temp_t = temp_t1_initial
     last_improvement_iter = 0
 
-    # 멀티프로세싱 풀 생성
     try:
         with mp.Pool(processes=k_parents) as pool:
             for n_iter in range(1, max_iter + 1):
@@ -1029,7 +987,7 @@ def multiprocess_k_parent_sa(chip_obj, scaler: CostScaler, weights: CostWeights,
                 cost_differences_local = []
                 
                 temp_chip_for_local_search = copy.deepcopy(chip_for_temp_calc)
-                for _ in range(30): # 냉각 스케줄 계산을 위한 샘플링 횟수
+                for _ in range(30):
                     action_name_local = select_random_action()
                     temp_chip_for_local_search.apply_specific_operation(action_name_local)
                     cost_after_local_move = calc_combined_cost(temp_chip_for_local_search.modules, weights=weights, chip=temp_chip_for_local_search, scaler=scaler,
@@ -1054,87 +1012,35 @@ def multiprocess_k_parent_sa(chip_obj, scaler: CostScaler, weights: CostWeights,
                         else:
                             current_temp_t = max((temp_t1_initial * avg_cost_difference_local) / n_iter, 1e-6)
                 
-                temperatures_log.append(current_temp_t)
-
                 worker_tasks = []
                 for i, parent in enumerate(parent_states):
                     worker_data = {
-                        'worker_id': i,
-                        'chip_state': parent.chip_state,
-                        'max_depth': max_depth,
-                        'temperature': current_temp_t,
-                        'weights': weights,
-                        'scaler': scaler,
-                        'use_ds_in_cost_sa': use_ds_in_cost_sa,
-                        'sample_moves_num': sample_moves_num # 워커에 전달
+                        'worker_id': i, 'chip_state': parent.chip_state, 'max_depth': max_depth,
+                        'temperature': current_temp_t, 'weights': weights, 'scaler': scaler,
+                        'use_ds_in_cost_sa': use_ds_in_cost_sa, 'sample_moves_num': sample_moves_num
                     }
                     worker_tasks.append(worker_data)
 
                 try:
-                    worker_results = pool.map_async(worker_sa_depth_search, worker_tasks).get(timeout=120)
+                    worker_results = pool.map(worker_sa_depth_search, worker_tasks)
                     
                     for result in worker_results:
                         if result['success']:
                             worker_id = result['worker_id']
                             parent_states[worker_id] = ParentState(
-                                chip_state=copy.deepcopy(result['best_chip']),
-                                cost=result['best_cost']
+                                chip_state=copy.deepcopy(result['best_chip']), cost=result['best_cost']
                             )
                             if result['best_cost'] < global_best_cost:
                                 global_best_cost = result['best_cost']
                                 global_best_chip = copy.deepcopy(result['best_chip'])
                         else:
                             print(f"[Warning][R={r_val_for_log}] Worker {result['worker_id']} 실패: {result['error']}")
-
-                except mp.TimeoutError:
-                    print(f"[Warning][R={r_val_for_log}] Iter {n_iter}: 워커 프로세스 타임아웃")
-                    continue
                 except Exception as e:
                     print(f"[Error][R={r_val_for_log}] Iter {n_iter}: 멀티프로세싱 오류 - {e}")
                     continue
 
                 if global_best_cost < best_cost_before_iter:
-                    improved_this_iter = True
                     last_improvement_iter = n_iter
-                else:
-                    improved_this_iter = False
-
-                if improved_this_iter and refinement_steps > 0:
-                    temp_chip_for_refinement = copy.deepcopy(global_best_chip)
-                    for _ in range(refinement_steps):
-                        cost_before_refine_move = calc_combined_cost(
-                            temp_chip_for_refinement.modules, weights=weights, chip=temp_chip_for_refinement, scaler=scaler,
-                            use_dead_space_in_cost=use_ds_in_cost_sa)
-                        
-                        # 지역 탐색에서도 Best-of-N 전략 적용
-                        chip_after_refine_move, cost_after_refine_move = select_best_of_n_moves(
-                            temp_chip_for_refinement, 5, weights, scaler, use_ds_in_cost_sa # 5번 시도
-                        )
-                        
-                        delta_e_refine = cost_after_refine_move - cost_before_refine_move
-                        if delta_e_refine < 0 or (current_temp_t > 1e-12 and random.random() < math.exp(-abs(delta_e_refine) / current_temp_t)):
-                            temp_chip_for_refinement = chip_after_refine_move
-                            if cost_after_refine_move < global_best_cost:
-                                global_best_cost = cost_after_refine_move
-                                global_best_chip = copy.deepcopy(temp_chip_for_refinement)
-                                last_improvement_iter = n_iter
-                        # else: 수용 안하면 상태 유지 (temp_chip_for_refinement는 변경되지 않음)
-
-                if pruning_start_iter is not None and n_iter >= pruning_start_iter and \
-                   (n_iter - pruning_start_iter) % pruning_interval == 0:
-                    if len(parent_states) >= 6:
-                        # print(f"  -> Iter {n_iter}: Pruning 및 Mutation 수행...")
-                        parent_states.sort(key=lambda p: p.cost)
-                        top_3_chips = [p.chip_state for p in parent_states[:3]]
-                        
-                        for i in range(1, 4):
-                            new_chip = copy.deepcopy(random.choice(top_3_chips))
-                            for _ in range(mutation_strength):
-                                new_chip.apply_specific_operation(select_random_action())
-                            
-                            new_cost = calc_combined_cost(new_chip.modules, weights=weights, chip=new_chip, scaler=scaler,
-                                                          use_dead_space_in_cost=use_ds_in_cost_sa)
-                            parent_states[-i] = ParentState(chip_state=new_chip, cost=new_cost)
 
                 if n_iter % 200 == 0 or n_iter == 1 or n_iter == max_iter:
                     avg_cost = sum(p.cost for p in parent_states) / len(parent_states) if parent_states else 0.0
@@ -1142,12 +1048,11 @@ def multiprocess_k_parent_sa(chip_obj, scaler: CostScaler, weights: CostWeights,
 
     except Exception as e:
         print(f"[Error][R={r_val_for_log}] 멀티프로세싱 풀 생성/실행 중 오류: {e}")
-        print("[Info] 멀티프로세싱 SA가 비정상적으로 종료되었습니다. 현재까지의 최적해를 반환합니다.")
 
     return global_best_chip
 
 # ─────────────────────────────────────────────────────────────
-# NEW: 최종 3단계 하이브리드 SA
+# NEW: final_hybrid_sa 함수 추가
 # ─────────────────────────────────────────────────────────────
 def final_hybrid_sa(chip_obj, scaler: CostScaler, weights: CostWeights, max_iter=40000, k_workers=None,
                     P_initial=0.8, c_cooling=10, exploitation_depth=10, exploitation_samples=30,
@@ -1162,11 +1067,9 @@ def final_hybrid_sa(chip_obj, scaler: CostScaler, weights: CostWeights, max_iter
     global_best_chip = copy.deepcopy(chip_obj)
     global_best_cost = calc_combined_cost(global_best_chip.modules, weights=weights, chip=global_best_chip, scaler=scaler, use_dead_space_in_cost=True)
     
-    # 탐험가(Explorer) 초기화
     explorer_chip = copy.deepcopy(global_best_chip)
     explorer_cost = global_best_cost
 
-    # 초기 온도 계산
     uphill_differences = []
     temp_chip_for_t1 = copy.deepcopy(chip_obj)
     for _ in range(50):
@@ -1183,44 +1086,32 @@ def final_hybrid_sa(chip_obj, scaler: CostScaler, weights: CostWeights, max_iter
     if avg_uphill_delta < 1e-12: avg_uphill_delta = 1.0
     temp_t1_initial = abs(avg_uphill_delta / math.log(P_initial)) if P_initial < 1.0 else 1.0
 
-    temperatures_log = []
     last_improvement_iter = 0
     
     try:
         with mp.Pool(processes=k_workers) as pool:
-            # 전체 반복 횟수를 조절하기 위해 외부 루프 사용
             main_iter_count = 0
             while main_iter_count < max_iter:
                 
-                # --- 온도 계산 ---
                 if reheating_threshold and (main_iter_count - last_improvement_iter > reheating_threshold):
                     current_temp_t = temp_t1_initial * 0.15
                     last_improvement_iter = main_iter_count
                 else:
                     current_temp_t = max((temp_t1_initial * avg_uphill_delta) / ((main_iter_count + 1) * c_cooling), 1e-6)
-                temperatures_log.append(current_temp_t)
 
-                # =============================================================
-                # 1. 병렬 집중 탐색 (Exploitation)
-                # =============================================================
                 worker_tasks = []
                 for i in range(k_workers):
                     worker_data = {
-                        'worker_id': i,
-                        'chip_state': global_best_chip, # 모든 워커가 현재 최적해에서 시작
-                        'max_depth': exploitation_depth,
-                        'temperature': current_temp_t,
-                        'weights': weights,
-                        'scaler': scaler,
-                        'use_ds_in_cost_sa': True,
-                        'sample_moves_num': exploitation_samples
+                        'worker_id': i, 'chip_state': global_best_chip, 'max_depth': exploitation_depth,
+                        'temperature': current_temp_t, 'weights': weights, 'scaler': scaler,
+                        'use_ds_in_cost_sa': True, 'sample_moves_num': exploitation_samples
                     }
                     worker_tasks.append(worker_data)
                 
                 best_cost_before_iter = global_best_cost
                 
                 try:
-                    worker_results = pool.map_async(worker_sa_depth_search, worker_tasks).get(timeout=120)
+                    worker_results = pool.map(worker_sa_depth_search, worker_tasks)
                     for result in worker_results:
                         if result['success'] and result['best_cost'] < global_best_cost:
                             global_best_cost = result['best_cost']
@@ -1231,14 +1122,11 @@ def final_hybrid_sa(chip_obj, scaler: CostScaler, weights: CostWeights, max_iter
                 if global_best_cost < best_cost_before_iter:
                     last_improvement_iter = main_iter_count
 
-                # =============================================================
-                # 2. 직렬 탐험 (Exploration)
-                # =============================================================
                 for _ in range(exploration_steps):
                     cost_before_explore = explorer_cost
                     
                     chip_after_explore, cost_after_explore = select_best_of_n_moves(
-                        explorer_chip, 5, weights, scaler, True # 탐험가는 적은 샘플로 빠르게 탐색
+                        explorer_chip, 5, weights, scaler, True
                     )
                     
                     delta_e = cost_after_explore - cost_before_explore
@@ -1261,29 +1149,8 @@ def final_hybrid_sa(chip_obj, scaler: CostScaler, weights: CostWeights, max_iter
 
     return global_best_chip
 
-
-def partial_sa_for_initial(chip_obj, scaler: CostScaler, weights: CostWeights, pre_iter=500, k_parents=1, r_val_for_log=0.0): 
-    print(f"\n[Info][R={r_val_for_log}] --- 초기 레이아웃 개선을 위한 부분 K-Parent SA 실행 ---") 
-    improved_chip_obj = multiprocess_k_parent_sa(
-        chip_obj,
-        scaler=scaler,
-        weights=weights,
-        max_iter=pre_iter, 
-        k_parents=k_parents,
-        P_initial=0.95, 
-        c_cooling=50,  
-        sample_moves_num=15,
-        use_ds_in_cost_sa=False,
-        refinement_steps=5,
-        pruning_start_iter=None,
-        reheating_threshold=None,
-        r_val_for_log=r_val_for_log
-    )
-    print(f"[Info][R={r_val_for_log}] --- 부분 K-Parent SA 종료. 개선된 초기 레이아웃 사용 ---") 
-    return improved_chip_obj
-
 # ─────────────────────────────────────────────────────────────
-# 4. 파일 파싱(Yal, GSRC) 
+# 파일 파싱(Yal, GSRC) 
 # ─────────────────────────────────────────────────────────────
 
 def parse_yal(file_path_str):
@@ -1457,7 +1324,6 @@ def parse_gsrc_nets(nets_file_path, modules_list_input):
 def run_optimization_for_r(args, result_queue):
     """
     하나의 종횡비(R)에 대한 전체 최적화 파이프라인을 실행하는 래퍼 함수.
-    이 함수는 개별 프로세스에서 실행되며, 중첩된 Pool을 생성하지 않습니다.
     """
     r_val, k_val, modules, base_weights = args
     process_id = os.getpid()
@@ -1485,10 +1351,11 @@ def run_optimization_for_r(args, result_queue):
     )
     first_sa_best_chip.plot_b_tree(iteration=f"1st SA Result R{r_val:.1f}", title_suffix="", save_only=True)
 
+    # --- MODIFICATION: 2단계와 3단계의 페널티 가중치를 대폭 상향 ---
     # [2단계] 집중 탐색 및 Pruning
     print(f"[Process {process_id} | R={r_val:.1f}] 2단계 K-Parent SA (집중 탐색) 진행 중...")
     stage2_weights = copy.deepcopy(base_weights)
-    stage2_weights.r_penalty *= 10
+    stage2_weights.r_penalty *= 200  # 페널티 가중치 대폭 상향
     second_sa_best_chip = multiprocess_k_parent_sa(
         first_sa_best_chip, scaler=scaler, weights=stage2_weights, max_iter=10000, 
         k_parents=k_val, P_initial=0.95, c_cooling=100, sample_moves_num=10,   
@@ -1500,8 +1367,8 @@ def run_optimization_for_r(args, result_queue):
     # [3단계] 최종 미세 조정 (하이브리드 SA)
     print(f"[Process {process_id} | R={r_val:.1f}] 3단계 하이브리드 SA (최종 미세 조정) 진행 중...")
     stage3_weights = copy.deepcopy(base_weights)
-    stage3_weights.r_penalty *= 10
-    stage3_weights.r_dead_space *= 10
+    stage3_weights.r_penalty *= 2000  # 페널티 가중치를 매우 높게 설정
+    stage3_weights.r_dead_space *= 100 # 데드스페이스 가중치도 함께 상향
     third_sa_best_chip = final_hybrid_sa(
         second_sa_best_chip, scaler=scaler, weights=stage3_weights, max_iter=40000,
         k_workers=k_val, P_initial=0.8, c_cooling=10, exploitation_samples=30,
@@ -1562,13 +1429,11 @@ if __name__=="__main__":
     print(f"[Info] 각 R값(1.0, 2.0, 3.0)은 각각 {workers_per_r}개의 하위 워커를 사용하여 병렬로 최적화됩니다.")
     print(f"[Info] 총 {num_parallel_processes}개의 최적화 프로세스가 동시에 실행됩니다.")
 
-    # --- CORRECTED: 스케일러는 각 프로세스 내부에서 초기화되므로 메인에서는 제거 ---
     base_weights = CostWeights(w=0.66, r_penalty=1.0, r_dead_space=80.0)
     
     # 병렬 실행을 위한 인수 준비
     parallel_args = []
     for i, r_val in enumerate(ASPECT_RATIOS):
-        # 스케일러 객체를 전달하지 않음
         parallel_args.append(
             (r_val, workers_per_r[i], modules, base_weights)
         )
@@ -1607,8 +1472,8 @@ if __name__=="__main__":
     final_results_data = []
     # 최종 가중치는 3단계에서 사용한 가중치
     final_weights = copy.deepcopy(base_weights)
-    final_weights.r_penalty *= 10
-    final_weights.r_dead_space *= 10
+    final_weights.r_penalty *= 2000
+    final_weights.r_dead_space *= 100
 
     # 최종 결과를 출력하기 위한 스케일러 (R=1.0 기준으로 다시 생성하여 일관된 비용 비교)
     final_scaler = CostScaler()
