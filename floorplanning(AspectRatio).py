@@ -1344,6 +1344,7 @@ def run_optimization_for_r(args, result_queue):
     print(f"[Process {process_id} | R={r_val:.1f}] 1단계 K-Parent SA (넓은 탐색) 진행 중...")
     stage1_weights = copy.deepcopy(base_weights)
     stage1_weights.r_dead_space = 1.0
+    stage1_weights.r_penalty *= 100
     first_sa_best_chip = multiprocess_k_parent_sa(
         chip_main, scaler=scaler, weights=stage1_weights, max_iter=3000,
         k_parents=k_val, P_initial=0.95, c_cooling=100, sample_moves_num=5,  
@@ -1355,7 +1356,7 @@ def run_optimization_for_r(args, result_queue):
     # [2단계] 집중 탐색 및 Pruning
     print(f"[Process {process_id} | R={r_val:.1f}] 2단계 K-Parent SA (집중 탐색) 진행 중...")
     stage2_weights = copy.deepcopy(base_weights)
-    stage2_weights.r_penalty *= 200  # 페널티 가중치 대폭 상향
+    stage2_weights.r_penalty *= 10000  # 페널티 가중치 대폭 상향
     second_sa_best_chip = multiprocess_k_parent_sa(
         first_sa_best_chip, scaler=scaler, weights=stage2_weights, max_iter=10000, 
         k_parents=k_val, P_initial=0.95, c_cooling=100, sample_moves_num=10,   
@@ -1367,8 +1368,8 @@ def run_optimization_for_r(args, result_queue):
     # [3단계] 최종 미세 조정 (하이브리드 SA)
     print(f"[Process {process_id} | R={r_val:.1f}] 3단계 하이브리드 SA (최종 미세 조정) 진행 중...")
     stage3_weights = copy.deepcopy(base_weights)
-    stage3_weights.r_penalty *= 2000  # 페널티 가중치를 매우 높게 설정
-    stage3_weights.r_dead_space *= 100 # 데드스페이스 가중치도 함께 상향
+    stage3_weights.r_penalty *= 20000  # 페널티 가중치를 매우 높게 설정
+    stage3_weights.r_dead_space *= 50 # 데드스페이스 가중치도 함께 상향
     third_sa_best_chip = final_hybrid_sa(
         second_sa_best_chip, scaler=scaler, weights=stage3_weights, max_iter=40000,
         k_workers=k_val, P_initial=0.8, c_cooling=10, exploitation_samples=30,
