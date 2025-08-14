@@ -1,5 +1,8 @@
 ### ami33
-### DeadSpace ratio = 3.0%(R = 1.03), 4.19%(R = 1.93), 5.66%(R = 2.89) 
+### DeadSpace ratio
+### R = 1.03 (3.0%)
+### R = 1.93 (4.19%)
+### R = 2.89 (5.66%) 
 #### 1st SA
 <img width="2984" height="1486" alt="floorplan_1st_SA_Result_R1 0" src="https://github.com/user-attachments/assets/749cd999-0e1e-438b-b218-6c3a4501f6d6" />
 <img width="2984" height="1486" alt="floorplan_1st_SA_Result_R2 0" src="https://github.com/user-attachments/assets/4a1c8b50-151f-40d0-9d96-12d4988c0fe2" />
