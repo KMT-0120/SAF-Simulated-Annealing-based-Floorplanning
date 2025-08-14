@@ -1,5 +1,5 @@
 ### ami33
-### DeadSpace ratio
+### Aspect Ratio (DeadSpace ratio)
 ### R = 1.03 (3.0%)
 ### R = 1.93 (4.19%)
 ### R = 2.89 (5.66%) 
