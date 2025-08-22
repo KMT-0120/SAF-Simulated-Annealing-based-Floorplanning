@@ -33,6 +33,8 @@
 #7/16 [개선안 적용] 워커 내부 프루닝: 워커가 비용 개선을 전혀 못했을 경우, 해당 워커의 모든 시도를 취소하고 초기 상태로 복귀
 #7/17 [개선안 적용] 최종 3단계 SA를 병렬 집중 탐색(Exploitation)과 직렬 탐험(Exploration)을 결합한 하이브리드 방식으로 변경
 #7/17 [개선안 적용] Parent(입력)와 Bound(계산) 개념을 분리하여 명확성 증대
+# [USER REQUEST] 종횡비(Aspect Ratio) 계산식 수정 (R = Height / Width)
+# [USER REQUEST] 병렬 최적화 -> 직렬 최적화로 변경. 각 종횡비마다 모든 가용 코어를 사용하여 순차적으로 실행
 
 import matplotlib
 matplotlib.use('Agg')  # GUI 백엔드 비활성화 (멀티프로세싱 호환성)
@@ -189,8 +191,11 @@ class Chip:
         
         if total_area > 0:
             base_area = total_area * 1.1
-            bound_h = math.sqrt(base_area / aspect_ratio)
-            bound_w = aspect_ratio * bound_h
+            # [수정] 종횡비 계산 변경 (R = Height / Width)
+            # A = W * H = W * (R*W) = R*W^2  => W = sqrt(A/R)
+            # H = R * W
+            bound_w = math.sqrt(base_area / aspect_ratio)
+            bound_h = aspect_ratio * bound_w
         else:
             bound_w = 1000.0
             bound_h = 1000.0
@@ -1319,17 +1324,16 @@ def parse_gsrc_nets(nets_file_path, modules_list_input):
     return modules_list_input 
 
 # ─────────────────────────────────────────────────────────────
-# NEW: 병렬 최적화 실행 함수
+# [수정] 직렬 최적화 실행 함수
 # ─────────────────────────────────────────────────────────────
-def run_optimization_for_r(args, result_queue):
+def run_single_optimization_pipeline(r_val, k_val, modules, base_weights):
     """
-    하나의 종횡비(R)에 대한 전체 최적화 파이프라인을 실행하는 래퍼 함수.
+    하나의 종횡비(R)에 대한 전체 최적화 파이프라인을 실행하는 함수.
     """
-    r_val, k_val, modules, base_weights = args
     process_id = os.getpid()
-    print(f"[Process {process_id} | R={r_val:.1f}] 최적화 시작 (할당된 워커: {k_val}개)")
+    print(f"[R={r_val:.1f}] 최적화 시작 (할당된 워커: {k_val}개)")
 
-    # --- CORRECTED: 각 프로세스마다 독립적인 스케일러 초기화 ---
+    # --- 각 R값에 대해 독립적인 스케일러 초기화 ---
     chip_main = Chip(copy.deepcopy(modules), aspect_ratio=r_val)
     chip_main.calculate_coordinates()
     
@@ -1338,23 +1342,22 @@ def run_optimization_for_r(args, result_queue):
     )
     scaler = CostScaler()
     scaler.initialize_scales(init_aN_raw, init_hN_raw, init_pN_raw, init_dsN_raw)
-    print(f"[Process {process_id} | R={r_val:.1f}] 독립 스케일러 초기화 완료 (초기 페널티: {init_pN_raw:.2f})")
+    print(f"[R={r_val:.1f}] 독립 스케일러 초기화 완료 (초기 페널티: {init_pN_raw:.2f})")
     
     # [1단계] 넓은 탐색
-    print(f"[Process {process_id} | R={r_val:.1f}] 1단계 K-Parent SA (넓은 탐색) 진행 중...")
+    print(f"[R={r_val:.1f}] 1단계 K-Parent SA (넓은 탐색) 진행 중...")
     stage1_weights = copy.deepcopy(base_weights)
     stage1_weights.r_dead_space = 1.0
     stage1_weights.r_penalty *= 100
     first_sa_best_chip = multiprocess_k_parent_sa(
-        chip_main, scaler=scaler, weights=stage1_weights, max_iter=3000,
+        chip_main, scaler=scaler, weights=stage1_weights, max_iter=10000,
         k_parents=k_val, P_initial=0.95, c_cooling=100, sample_moves_num=5,  
         use_ds_in_cost_sa=True, refinement_steps=15, r_val_for_log=r_val
     )
     first_sa_best_chip.plot_b_tree(iteration=f"1st SA Result R{r_val:.1f}", title_suffix="", save_only=True)
 
-    # --- MODIFICATION: 2단계와 3단계의 페널티 가중치를 대폭 상향 ---
     # [2단계] 집중 탐색 및 Pruning
-    print(f"[Process {process_id} | R={r_val:.1f}] 2단계 K-Parent SA (집중 탐색) 진행 중...")
+    print(f"[R={r_val:.1f}] 2단계 K-Parent SA (집중 탐색) 진행 중...")
     stage2_weights = copy.deepcopy(base_weights)
     stage2_weights.r_penalty *= 10000  # 페널티 가중치 대폭 상향
     stage2_weights.r_dead_space = 10.0
@@ -1367,9 +1370,9 @@ def run_optimization_for_r(args, result_queue):
     second_sa_best_chip.plot_b_tree(iteration=f"2nd SA Result R{r_val:.1f}", title_suffix="", save_only=True)
     
     # [3단계] 최종 미세 조정 (하이브리드 SA)
-    print(f"[Process {process_id} | R={r_val:.1f}] 3단계 하이브리드 SA (최종 미세 조정) 진행 중...")
+    print(f"[R={r_val:.1f}] 3단계 하이브리드 SA (최종 미세 조정) 진행 중...")
     stage3_weights = copy.deepcopy(base_weights)
-    stage3_weights.r_penalty *= 100  # 페널티 가중치를 매우 높게 설정
+    stage3_weights.r_penalty *= 40000  # 페널티 가중치를 매우 높게 설정
     stage3_weights.r_dead_space *= 50 # 데드스페이스 가중치도 함께 상향
     third_sa_best_chip = final_hybrid_sa(
         second_sa_best_chip, scaler=scaler, weights=stage3_weights, max_iter=40000,
@@ -1382,9 +1385,9 @@ def run_optimization_for_r(args, result_queue):
     third_sa_best_chip.compact_floorplan_final()
     third_sa_best_chip.plot_b_tree(iteration=f"Final Compacted R{r_val:.1f}", title_suffix="", save_only=True) 
 
-    print(f"[Process {process_id} | R={r_val:.1f}] 최적화 완료.")
-    # 결과를 큐에 넣어서 반환
-    result_queue.put((r_val, third_sa_best_chip))
+    print(f"[R={r_val:.1f}] 최적화 완료.")
+    return third_sa_best_chip
+
 
 # ─────────────────────────────────────────────────────────────
 # 5. 메인 실행 
@@ -1401,7 +1404,7 @@ if __name__=="__main__":
     
     # Yal 파일 또는 GSRC 파일 선택 사용
     # --- Yal 예제 ---
-    blocks_file="C:/Users/KMT/Desktop/SAF/code/yal/example/ami33.yal"
+    blocks_file="C:/Users/KMT/Desktop/SAF/code/yal/example/hp.yal"
     modules=parse_yal(blocks_file)
 
     #--- GSRC 예제 ---
@@ -1418,57 +1421,27 @@ if __name__=="__main__":
     print(f"\n[Info] 다중 종횡비 최적화를 시작합니다. 대상 R: {ASPECT_RATIOS}")
 
     num_total_workers = max(1, mp.cpu_count() - 2)
-    num_r_targets = len(ASPECT_RATIOS)
+    print(f"[Info] 각 종횡비 최적화에 {num_total_workers}개의 워커(코어)를 사용합니다.")
     
-    # 각 R 프로세스가 사용할 하위 워커 수 계산
-    workers_per_r = [num_total_workers // num_r_targets] * num_r_targets
-    remainder_workers = num_total_workers % num_r_targets
-    for i in range(remainder_workers):
-        workers_per_r[i] += 1
-    
-    num_parallel_processes = len(ASPECT_RATIOS)
-    print(f"[Info] 총 {num_total_workers}개의 워커를 {num_r_targets}개의 종횡비 최적화에 분배합니다.")
-    print(f"[Info] 각 R값(1.0, 2.0, 3.0)은 각각 {workers_per_r}개의 하위 워커를 사용하여 병렬로 최적화됩니다.")
-    print(f"[Info] 총 {num_parallel_processes}개의 최적화 프로세스가 동시에 실행됩니다.")
-
     base_weights = CostWeights(w=0.66, r_penalty=1.0, r_dead_space=80.0)
     
-    # 병렬 실행을 위한 인수 준비
-    parallel_args = []
-    for i, r_val in enumerate(ASPECT_RATIOS):
-        parallel_args.append(
-            (r_val, workers_per_r[i], modules, base_weights)
-        )
-
-    # --- 병렬 최적화 실행 ---
+    # --- [수정] 직렬 최적화 실행 ---
     start_time = time.time()
-    print("\n" + "="*20 + " 병렬 최적화 시작 " + "="*20)
+    print("\n" + "="*20 + " 직렬 최적화 시작 " + "="*20)
     
-    manager = mp.Manager()
-    result_queue = manager.Queue()
-    processes = []
+    final_chips = []
+    for r_val in ASPECT_RATIOS:
+        print(f"\n{'='*15} R = {r_val:.1f}에 대한 최적화를 시작합니다. {'='*15}")
+        final_chip_for_r = run_single_optimization_pipeline(r_val, num_total_workers, modules, base_weights)
+        final_chips.append(final_chip_for_r)
+        print(f"\n{'='*15} R = {r_val:.1f}에 대한 최적화가 완료되었습니다. {'='*15}")
 
-    for args in parallel_args:
-        p = mp.Process(target=run_optimization_for_r, args=(args, result_queue))
-        processes.append(p)
-        p.start()
-
-    for p in processes:
-        p.join()
-
-    # 큐에서 결과 수집
-    results_from_queue = []
-    while not result_queue.empty():
-        results_from_queue.append(result_queue.get())
-    
-    # R 값 기준으로 정렬하여 순서 보장
-    results_from_queue.sort(key=lambda x: x[0])
-    final_chips = [chip for r_val, chip in results_from_queue]
-    
     end_time = time.time()
-    print("\n" + "="*20 + f" 병렬 최적화 종료 (소요 시간: {end_time - start_time:.2f}초) " + "="*20)
+    print("\n" + "="*20 + f" 전체 직렬 최적화 종료 (총 소요 시간: {end_time - start_time:.2f}초) " + "="*20)
     
     # --- 최종 결과 처리 및 비교 ---
+
+    
     print("\n\n" + "="*25 + " 최종 결과 요약 " + "="*25)
     
     final_results_data = []
@@ -1505,7 +1478,8 @@ if __name__=="__main__":
         final_results_data.append(results)
 
         print(f"\n--- 결과 (목표 R = {r_val:.1f}) ---")
-        print(f"최종 경계 상자: W={final_w:.2f}, H={final_h:.2f}, 면적={final_area:.2f} (실제 R: {final_w/final_h if final_h>0 else float('inf'):.2f})")
+        # [수정] 실제 R값 표시를 H/W로 변경
+        print(f"최종 경계 상자: W={final_w:.2f}, H={final_h:.2f}, 면적={final_area:.2f} (실제 R: {final_h/final_w if final_w>0 else float('inf'):.2f})")
         print(f"최종 HPWL (절대값)         = {final_hpwl:.2f}")
         print(f"최종 실제 DeadSpace 면적 = {actual_dead_space_area:.2f} ({actual_dead_space_percent:.2f}%)")
         print(f"최종 비용 (w={final_weights.w:.2f}, r_penalty={final_weights.r_penalty:.2f}, r_ds={final_weights.r_dead_space:.2f}) = {final_cost:.3f}")
