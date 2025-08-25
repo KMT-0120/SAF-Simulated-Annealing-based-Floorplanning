@@ -48,3 +48,61 @@
 최종 HPWL (절대값)         = 0.00
 최종 실제 DeadSpace 면적 = 69384.00 (5.66%)
 최종 비용 (w=0.66, r_penalty=2000.00, r_ds=100.00) = 8.531
+
+
+### ami49
+### Aspect Ratio (DeadSpace ratio)
+### R = 1.03 (4.79%)
+### R = 1.93 (4.04%)
+### R = 2.89 (3.08%) 
+
+
+#### 1st SA
+<img width="2793" height="1486" alt="floorplan_1st_SA_Result_R3 0" src="https://github.com/user-attachments/assets/5a909c8e-345a-4574-860a-2adab2a7c7b5" />
+<img width="2879" height="1486" alt="floorplan_1st_SA_Result_R2 0" src="https://github.com/user-attachments/assets/00c79c30-8d12-4136-8013-8c3d8f4ce954" />
+<img width="2960" height="1525" alt="floorplan_1st_SA_Result_R1 0" src="https://github.com/user-attachments/assets/3e1cd8c6-bc9f-4243-a05d-004808bb37c1" />
+
+
+#### 2st SA
+<img width="2793" height="1486" alt="floorplan_2nd_SA_Result_R3 0" src="https://github.com/user-attachments/assets/c84ec3ae-8df1-47f4-b1ad-a4dde623f596" />
+<img width="2879" height="1486" alt="floorplan_2nd_SA_Result_R2 0" src="https://github.com/user-attachments/assets/26732510-7afc-4bc2-b5f6-c7d38275678d" />
+<img width="2960" height="1525" alt="floorplan_2nd_SA_Result_R1 0" src="https://github.com/user-attachments/assets/9dcf0118-cfe8-436b-9d18-3cca833aba56" />
+
+
+#### 3st SA
+<img width="2792" height="1486" alt="floorplan_3rd_Hybrid_SA_Result_R3 0" src="https://github.com/user-attachments/assets/41aeb91f-ab57-48ef-8d9b-88c5ecc4e02f" />
+<img width="2879" height="1486" alt="floorplan_3rd_Hybrid_SA_Result_R2 0" src="https://github.com/user-attachments/assets/c2ed0429-46d2-418a-97fc-dfd8b7ed9f14" />
+<img width="2959" height="1525" alt="floorplan_3rd_Hybrid_SA_Result_R1 0" src="https://github.com/user-attachments/assets/94ea582b-b43e-4c0e-9998-70e24f7c3829" />
+
+
+#### Final Compaction
+<img width="2879" height="1486" alt="floorplan_Final_Compacted_R2 0" src="https://github.com/user-attachments/assets/9040114c-9c8e-4b71-a3b7-c6203b5d8271" />
+<img width="2959" height="1525" alt="floorplan_Final_Compacted_R1 0" src="https://github.com/user-attachments/assets/2b0369ae-44a7-42af-a336-257e1bc1a6e4" />
+<img width="2792" height="1486" alt="floorplan_Final_Compacted_R3 0" src="https://github.com/user-attachments/assets/88b5a500-8d61-4948-b634-420efd358ce9" />
+
+
+==================== 전체 직렬 최적화 종료 (총 소요 시간: 63789.25초) ====================
+
+
+========================= 최종 결과 요약 =========================
+  - 스케일러 초기화: Area=33.11, HPWL=6.62, Penalty=0.16, DS=1.49
+
+--- 결과 (목표 R = 1.0) ---
+최종 경계 상자: W=6272.00, H=5936.00, 면적=37230592.00 (실제 R: 0.95)
+최종 HPWL (절대값)         = 0.00
+최종 실제 DeadSpace 면적 = 1785168.00 (4.79%)
+최종 비용 (w=0.66, r_penalty=2000.00, r_ds=100.00) = 7.401
+
+--- 결과 (목표 R = 2.0) ---
+최종 경계 상자: W=4368.00, H=8456.00, 면적=36935808.00 (실제 R: 1.94)
+최종 HPWL (절대값)         = 0.00
+최종 실제 DeadSpace 면적 = 1490384.00 (4.04%)
+최종 비용 (w=0.66, r_penalty=2000.00, r_ds=100.00) = 6.260
+
+--- 결과 (목표 R = 3.0) ---
+최종 경계 상자: W=3598.00, H=10164.00, 면적=36570072.00 (실제 R: 2.82)
+최종 HPWL (절대값)         = 0.00
+최종 실제 DeadSpace 면적 = 1124648.00 (3.08%)
+최종 비용 (w=0.66, r_penalty=2000.00, r_ds=100.00) = 4.823
+
+=================================================================
