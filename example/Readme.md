@@ -426,7 +426,7 @@ HPWL (절대값) = 606866.00, 정규화된 HPWL = 580.559
 
 
 ## [n300] initial condition(made by partial SA) + 1st SA(iter5000) + 2nd SA(iter5000) + 3rd SA(iter40000) (할당된 워커: 10개)
-### partial SA and 1st, 2nd, 3rd SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty)R1
+### partial SA and 1st, 2nd, 3rd SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty)
 
 (where standard chip is square which has width, height = sqrt(all modules area sum*1.2) )
 
