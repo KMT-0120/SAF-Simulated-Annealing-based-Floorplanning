@@ -430,7 +430,7 @@ HPWL (절대값) = 606866.00, 정규화된 HPWL = 580.559
 
 (where standard chip is square which has width, height = sqrt(all modules area sum*1.2) )
 
-### [R1]
+### [R = 1.0]
 <img width="2982" height="1539" alt="floorplan_Final_Compacted_R1 0" src="https://github.com/user-attachments/assets/d086904c-c852-48db-8530-3fb26bfa91c9" />
 
 --- 결과 (목표 R = 1.0) ---
@@ -443,7 +443,7 @@ HPWL (절대값) = 606866.00, 정규화된 HPWL = 580.559
 
 최종 비용 (w=0.66, r_penalty=2000.00, r_ds=100.00) = 10.138
 
-### [R2]
+### [R = 2.0]
 <img width="2701" height="1486" alt="floorplan_Final_Compacted_R2 0" src="https://github.com/user-attachments/assets/30f13b65-114f-4e2b-b658-3c8e2c96ceb9" />
 
 --- 결과 (목표 R = 2.0) ---
@@ -456,7 +456,7 @@ HPWL (절대값) = 606866.00, 정규화된 HPWL = 580.559
 
 최종 비용 (w=0.66, r_penalty=2000.00, r_ds=100.00) = 9.066
 
-### [R3]
+### [R = 3.0]
 <img width="2581" height="1486" alt="floorplan_Final_Compacted_R3 0" src="https://github.com/user-attachments/assets/92e05819-5272-4f27-9b19-5c130f109f4e" />
 
 --- 결과 (목표 R = 3.0) ---
