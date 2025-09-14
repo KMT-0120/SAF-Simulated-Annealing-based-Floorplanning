@@ -1,4 +1,4 @@
-### ami33
+<img width="2983" height="1538" alt="floorplan_2nd_SA_Result_R1 0" src="https://github.com/user-attachments/assets/ea2a2316-58c8-43a5-8513-9ddb3a6e381d" />### ami33
 ### Aspect Ratio (DeadSpace ratio)
 ### R = 1.03 (3.0%)
 ### R = 1.93 (4.19%)
@@ -161,25 +161,31 @@
 
 =================================================================
 
-## [n300] initial condition(made by partial SA) + 1st SA(iter5000) + 2nd SA(iter5000) + 3rd SA(iter40000) (할당된 워커: 10개)
+## [n300] initial condition(made by partial SA) + 1st SA(iter5000) + 2nd SA(iter10000) + 3rd SA(iter10000) (할당된 워커: 10개)
 ### partial SA and 1st, 2nd, 3rd SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty)
 
 (where standard chip is square which has width, height = sqrt(all modules area sum*1.2) )
 
 ### [Target R = 1.0, Actual R = 0.97]
-<img width="2982" height="1539" alt="floorplan_Final_Compacted_R1 0" src="https://github.com/user-attachments/assets/d086904c-c852-48db-8530-3fb26bfa91c9" />
+
+<img width="2984" height="1532" alt="floorplan_1st_SA_Result_R1 0" src="https://github.com/user-attachments/assets/8dbcafca-0aae-4710-805e-8a23dee154f4" />
+<img width="2983" height="1538" alt="floorplan_2nd_SA_Result_R1 0" src="https://github.com/user-attachments/assets/a518565a-8c4e-4fac-b1a0-99b62cb91f18" />
+<img width="2983" height="1538" alt="floorplan_3rd_Hybrid_SA_Result_R1 0" src="https://github.com/user-attachments/assets/8790229d-a380-49af-ae06-af383830d767" />
+<img width="2983" height="1538" alt="floorplan_Final_Compacted_R1 0" src="https://github.com/user-attachments/assets/4ac0d023-79de-48cb-a9dc-eeddd5d7becb" />
+
 
 --- 결과 (목표 R = 1.0) ---
 
-최종 경계 상자: W=551.00, H=535.00, 면적=294785.00 (실제 R: 0.97)
+최종 경계 상자: W=549.00, H=537.00, 면적=294813.00 (실제 R: 0.98)
 
-최종 HPWL (절대값)         = 606383.00
+최종 HPWL (절대값)         = 608658.00
 
-최종 실제 DeadSpace 면적 = 21615.00 (7.33%)
+최종 실제 DeadSpace 면적 = 21643.00 (7.34%)
 
-최종 비용 (w=0.66, r_penalty=2000.00, r_ds=100.00) = 10.138
+최종 비용 (w=0.66, r_penalty=2000.00, r_ds=100.00) = 8.823
 
 ### [Target R = 2.0, Actual R = 1.86]
+
 <img width="2701" height="1486" alt="floorplan_Final_Compacted_R2 0" src="https://github.com/user-attachments/assets/30f13b65-114f-4e2b-b658-3c8e2c96ceb9" />
 
 --- 결과 (목표 R = 2.0) ---
@@ -193,15 +199,20 @@
 최종 비용 (w=0.66, r_penalty=2000.00, r_ds=100.00) = 9.066
 
 ### [Target R = 3.0, Actual R = 2.66]
-<img width="2581" height="1486" alt="floorplan_Final_Compacted_R3 0" src="https://github.com/user-attachments/assets/92e05819-5272-4f27-9b19-5c130f109f4e" />
+
+<img width="2617" height="1486" alt="floorplan_1st_SA_Result_R3 0" src="https://github.com/user-attachments/assets/d979c1f2-8aec-417e-9c62-d0a83b62ed30" />
+<img width="2585" height="1486" alt="floorplan_2nd_SA_Result_R3 0" src="https://github.com/user-attachments/assets/d404d65a-6d75-401a-b251-d117acd8f769" />
+<img width="2585" height="1486" alt="floorplan_3rd_Hybrid_SA_Result_R3 0" src="https://github.com/user-attachments/assets/9d7b6f46-678b-441f-8070-e0b2988fb453" />
+<img width="2585" height="1486" alt="floorplan_Final_Compacted_R3 0" src="https://github.com/user-attachments/assets/6dbc1935-07d5-416b-b392-f8a73b3f9f47" />
+
 
 --- 결과 (목표 R = 3.0) ---
 
-최종 경계 상자: W=335.00, H=890.00, 면적=298150.00 (실제 R: 2.66)
+최종 경계 상자: W=337.00, H=872.00, 면적=293864.00 (실제 R: 2.59)
 
-최종 HPWL (절대값)         = 738672.00
+최종 HPWL (절대값)         = 702671.00
 
-최종 실제 DeadSpace 면적 = 24980.00 (8.38%)
+최종 실제 DeadSpace 면적 = 20694.00 (7.04%)
 
-최종 비용 (w=0.66, r_penalty=2000.00, r_ds=100.00) = 11.575
+최종 비용 (w=0.66, r_penalty=2000.00, r_ds=100.00) = 8.492
 
