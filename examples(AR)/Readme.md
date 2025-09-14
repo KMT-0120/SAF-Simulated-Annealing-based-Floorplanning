@@ -185,7 +185,9 @@
 최종 비용 (w=0.66, r_penalty=2000.00, r_ds=100.00) = 8.823
 
 ### [Target R = 2.0, Actual R = 1.86]
-
+<img width="2735" height="1486" alt="floorplan_1st_SA_Result_R2 0" src="https://github.com/user-attachments/assets/d57e6e72-fe23-4e38-a1c2-031df9826afd" />
+<img width="2707" height="1486" alt="floorplan_2nd_SA_Result_R2 0" src="https://github.com/user-attachments/assets/cada4e78-b26b-499d-82ae-35cffd862edf" />
+<img width="2701" height="1486" alt="floorplan_3rd_Hybrid_SA_Result_R2 0" src="https://github.com/user-attachments/assets/2fe7df83-7ec2-4108-b04c-4b41faf33c6b" />
 <img width="2701" height="1486" alt="floorplan_Final_Compacted_R2 0" src="https://github.com/user-attachments/assets/30f13b65-114f-4e2b-b658-3c8e2c96ceb9" />
 
 --- 결과 (목표 R = 2.0) ---
