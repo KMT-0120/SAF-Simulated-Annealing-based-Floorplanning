@@ -1,4 +1,4 @@
-<img width="2983" height="1538" alt="floorplan_2nd_SA_Result_R1 0" src="https://github.com/user-attachments/assets/ea2a2316-58c8-43a5-8513-9ddb3a6e381d" />### ami33
+
 ### Aspect Ratio (DeadSpace ratio)
 ### R = 1.03 (3.0%)
 ### R = 1.93 (4.19%)
