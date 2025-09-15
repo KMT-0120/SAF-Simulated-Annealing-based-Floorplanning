@@ -107,6 +107,57 @@
 최종 비용 (w=0.66, r_penalty=2000.00, r_ds=100.00) = 4.823
 
 =================================================================
+## [n100] initial condition(made by partial SA) + 1st SA(iter5000) + 2nd SA(iter10000) + 3rd SA(iter10000) (할당된 워커: 10개)
+### partial SA and 1st, 2nd, 3rd SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty)
+
+<img width="2984" height="1536" alt="floorplan_1st_SA_Result_R1 0" src="https://github.com/user-attachments/assets/1c97fe86-9eec-4c17-ab1f-7638892625ed" />
+<img width="2979" height="1537" alt="floorplan_2nd_SA_Result_R1 0" src="https://github.com/user-attachments/assets/d914b35a-b8d4-4116-8071-68c4be899ae0" />
+<img width="2979" height="1537" alt="floorplan_3rd_Hybrid_SA_Result_R1 0" src="https://github.com/user-attachments/assets/d79bfe25-7595-4b69-bcbb-c4c197e393cb" />
+<img width="2979" height="1537" alt="floorplan_Final_Compacted_R1 0" src="https://github.com/user-attachments/assets/3165f4e7-e6f1-4be9-b59a-8ef71ec36a16" />
+========================= 최종 결과 요약 =========================
+
+  - 스케일러 초기화: Area=33.05, HPWL=0.18, Penalty=0.01, DS=1.49
+  - 
+--- 결과 (목표 R = 1.0) ---
+    
+최종 경계 상자: W=437.00, H=438.00, 면적=191406.00 (실제 R: 1.00)
+
+최종 HPWL (절대값)         = 224316.00
+
+최종 실제 DeadSpace 면적 = 11905.00 (6.22%)
+
+최종 비용 (w=0.66, r_penalty=2000.00, r_ds=100.00) = 9.682
+
+<img width="2731" height="1486" alt="floorplan_1st_SA_Result_R2 0" src="https://github.com/user-attachments/assets/7063fa1e-7986-4184-8d3e-3e216da6c4a2" />
+<img width="2711" height="1486" alt="floorplan_2nd_SA_Result_R2 0" src="https://github.com/user-attachments/assets/ef909932-9e94-474b-917e-86371b3bc951" />
+<img width="2711" height="1486" alt="floorplan_3rd_Hybrid_SA_Result_R2 0" src="https://github.com/user-attachments/assets/de7dbb15-ceb7-446f-bf58-ccab22635d22" />
+<img width="2711" height="1486" alt="floorplan_Final_Compacted_R2 0" src="https://github.com/user-attachments/assets/91b347c6-b87c-4376-a1f0-8743131f42e2" />
+
+--- 결과 (목표 R = 2.0) ---
+
+최종 경계 상자: W=321.00, H=593.00, 면적=190353.00 (실제 R: 1.85)
+
+최종 HPWL (절대값)         = 248363.00
+
+최종 실제 DeadSpace 면적 = 10852.00 (5.70%)
+
+최종 비용 (w=0.66, r_penalty=2000.00, r_ds=100.00) = 8.932
+
+<img width="2608" height="1486" alt="floorplan_1st_SA_Result_R3 0" src="https://github.com/user-attachments/assets/e059f349-d8c9-4886-918d-c06d5c5873f1" />
+<img width="2593" height="1486" alt="floorplan_2nd_SA_Result_R3 0" src="https://github.com/user-attachments/assets/587e181b-e6e3-4ed0-a232-2591bc5bc978" />
+<img width="2593" height="1486" alt="floorplan_3rd_Hybrid_SA_Result_R3 0" src="https://github.com/user-attachments/assets/ec5a3541-120c-4a51-9da4-29ffd70106be" />
+<img width="2593" height="1486" alt="floorplan_Final_Compacted_R3 0" src="https://github.com/user-attachments/assets/ac45ede4-426c-4ca2-b357-773ff3cdbbba" />
+
+--- 결과 (목표 R = 3.0) ---
+
+최종 경계 상자: W=262.00, H=724.00, 면적=189688.00 (실제 R: 2.76)
+
+최종 HPWL (절대값)         = 251109.00
+
+최종 실제 DeadSpace 면적 = 10187.00 (5.37%)
+
+최종 비용 (w=0.66, r_penalty=2000.00, r_ds=100.00) = 8.439
+
 
 ## [n200] initial condition(made by partial SA) + 1st SA(iter5000) + 2nd SA(iter10000) + 3rd SA(iter10000) (할당된 워커: 6개)
 ### partial SA and 1st, 2nd, 3rd SA's cost function use AREA, HPWL, penalty(exceed the standard chip penalty)
